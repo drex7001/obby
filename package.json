@@ -1,0 +1,42 @@
+{
+  "private": true,
+  "name": "gauntlet-run",
+  "version": "1.0.0",
+  "description": "A 3D multiplayer obstacle-course race built on Colyseus",
+  "type": "module",
+  "engines": {
+    "node": ">= 22.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "mocha -r tsx \"test/*.test.ts\" --exit --timeout 30000",
+    "clean": "rimraf dist",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@babylonjs/core": "^9.23.0",
+    "@colyseus/playground": "^0.18.3",
+    "@colyseus/schema": "^5.0.14",
+    "@colyseus/tools": "^0.18.1",
+    "colyseus": "^0.18.2",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "^0.18.1",
+    "@colyseus/testing": "^0.18.5",
+    "@types/express": "^5.0.6",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^22.13.13",
+    "mocha": "^11.7.5",
+    "playwright-core": "^1.62.1",
+    "rimraf": "^5.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.4",
+    "vite": "^8.2.1"
+  }
+}

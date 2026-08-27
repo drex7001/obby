@@ -1,0 +1,352 @@
+/* Gauntlet Run - HUD and overlays.
+   Everything here sits above the Babylon canvas and never takes pointer events
+   unless it is genuinely interactive, so the pointer-lock game view is never
+   stolen by a stray div. */
+
+:root {
+  --ink: #eef1ff;
+  --dim: #9aa3cc;
+  --panel: rgba(14, 16, 34, 0.86);
+  --edge: rgba(150, 165, 255, 0.18);
+  --accent: #6ee7ff;
+  --warm: #ffb454;
+  --good: #6ee787;
+  --bad: #ff6b8a;
+  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #070912;
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+/* ------------------------------------------------------------------ nameplates */
+
+#nameplates {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.plate {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(10, 12, 28, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  will-change: transform, opacity;
+}
+
+.plate .pip {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+/* ------------------------------------------------------------------------ HUD */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  padding: 22px 26px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 8px;
+}
+
+#hud[hidden] { display: none; }
+
+.hud-tl { grid-column: 1; grid-row: 1; justify-self: start; }
+.hud-tr { grid-column: 2; grid-row: 1; justify-self: end; text-align: right; }
+.hud-bl { grid-column: 1; grid-row: 3; justify-self: start; }
+.hud-br { grid-column: 2; grid-row: 3; justify-self: end; text-align: right; }
+
+.pos {
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.65);
+}
+.pos #pos-of {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--dim);
+  margin-left: 6px;
+}
+
+.section {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.clock {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.65);
+}
+.clock.urgent { color: var(--bad); }
+
+.round {
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* live leaderboard */
+.board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 216px;
+}
+
+.board li {
+  display: grid;
+  grid-template-columns: 20px 9px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: rgba(10, 12, 28, 0.5);
+  border: 1px solid transparent;
+}
+.board li.self {
+  background: rgba(30, 40, 82, 0.76);
+  border-color: var(--edge);
+}
+.board li.done { color: var(--good); }
+.board li.out { color: var(--dim); opacity: 0.72; }
+
+.board .n { color: var(--dim); font-variant-numeric: tabular-nums; font-weight: 700; }
+.board .pip { width: 9px; height: 9px; border-radius: 50%; }
+.board .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.board .val { font-family: var(--mono); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+.notes {
+  font-size: 12px;
+  color: var(--warm);
+  max-width: 330px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.keys {
+  display: flex;
+  gap: 14px;
+  justify-content: flex-end;
+  font-size: 11px;
+  color: var(--dim);
+}
+kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-right: 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* big centre callouts: countdown, "GO", checkpoint banners */
+.centre {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: center;
+  justify-self: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.callout {
+  font-size: 88px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  text-shadow: 0 6px 40px rgba(0, 0, 0, 0.8);
+  animation: pop 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.callout.small { font-size: 30px; letter-spacing: 0.04em; }
+.callout.sub {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 10px;
+  animation: none;
+}
+.callout.good { color: var(--good); }
+.callout.warm { color: var(--warm); }
+
+@keyframes pop {
+  from { transform: scale(1.5); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* -------------------------------------------------------------------- overlays */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(120% 90% at 50% 0%, rgba(24, 30, 70, 0.72), rgba(5, 6, 16, 0.94));
+  backdrop-filter: blur(7px);
+  z-index: 10;
+}
+.overlay[hidden] { display: none; }
+
+.panel {
+  width: min(430px, 90vw);
+  padding: 34px 32px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+.panel.wide { width: min(560px, 92vw); text-align: left; }
+
+.title {
+  margin: 0;
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.title span { color: var(--accent); }
+
+.tagline {
+  margin: 10px 0 26px;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.field { display: block; text-align: left; margin-bottom: 14px; }
+.field span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+.field input {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+}
+.field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.primary {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #6ee7ff, #3aa8e0);
+  color: #04121c;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.primary:active:not(:disabled) { transform: translateY(1px); }
+.primary:disabled { opacity: 0.45; cursor: default; }
+
+.status {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  color: var(--dim);
+  min-height: 1.2em;
+}
+.status.error { color: var(--bad); }
+
+/* ------------------------------------------------------------------ standings */
+
+.results .panel { text-align: left; }
+.results h2 {
+  margin: 0 0 18px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.standings { list-style: none; margin: 0; padding: 0; }
+.standings li {
+  display: grid;
+  grid-template-columns: 46px 12px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+.standings li + li { margin-top: 4px; }
+.standings li:nth-child(odd) { background: rgba(255, 255, 255, 0.035); }
+.standings li.self { background: rgba(110, 231, 255, 0.11); box-shadow: inset 0 0 0 1px var(--edge); }
+
+.standings .place { font-weight: 800; font-size: 15px; color: var(--dim); }
+.standings li:first-child .place { color: var(--warm); }
+.standings .pip { width: 12px; height: 12px; border-radius: 50%; }
+.standings .who { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.standings .time { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13.5px; }
+.standings .time.out { color: var(--dim); }
+
+@media (max-width: 720px) {
+  #hud { padding: 14px; }
+  .pos { font-size: 30px; }
+  .clock { font-size: 21px; }
+  .board { min-width: 0; }
+  .keys { display: none; }
+  .callout { font-size: 58px; }
+}
