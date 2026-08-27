@@ -11,7 +11,10 @@ import assert from "assert";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core/scene";
 
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+
 import { buildLevel } from "../src/shared/level.js";
+import { hazardHit, type Body, type HitNormal } from "../src/shared/collision.js";
 import { makePose, poseAt, type WorldPhase } from "../src/shared/obstacles.js";
 import { Course } from "../src/client/render/course.js";
 import { meshYaw, type Stage } from "../src/client/render/scene.js";
@@ -89,6 +92,62 @@ describe("course rendering", () => {
       // Course geometry is drawn with the yaw convention flipped; getting this
       // wrong would mirror every rotating platform against its own collider.
       assert.ok(Math.abs(mesh.rotation.y - meshYaw(pose.yaw)) < 1e-9, `${ob.kind} yaw drifted`);
+    }
+    engine.dispose();
+  });
+
+  /**
+   * The renderer and the simulation each rotate a box by yaw, in separate code,
+   * with separate conventions. This crosses the two: it takes a point from the
+   * MESH's own world matrix and asks the collider whether it is inside.
+   *
+   * Regression. `hazardHit` used to invert with `cos(-yaw)` while `toLocal` -
+   * which every solid uses, and which `meshYaw()` was derived from - inverts
+   * with `cos(yaw)`. Same formula, opposite angle, so a push bar's hitbox was
+   * the mirror image of the bar being drawn. The two met twice per revolution
+   * and the rest of the time players were hit by a bar visibly clear of them.
+   */
+  it("puts a hazard's hitbox exactly where its mesh is drawn", () => {
+    const { stage, scene, engine } = makeStage();
+    const level = buildLevel(4242);
+    const course = new Course(stage, level);
+    const spinners = level.obstacles.filter((o) => o.kind === "spinner");
+    assert.ok(spinners.length > 0, "the course should have sweeping bars");
+
+    const body: Body = {
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: true, groundId: 0,
+    };
+    const out: HitNormal = { nx: 0, nz: 0, hit: false };
+
+    // Sample right around a sweep, so no single lucky angle can pass this.
+    for (const tick of [0, 7, 13, 21, 34, 55, 89]) {
+      course.update(tick, phase);
+
+      for (const ob of spinners) {
+        const mesh = scene.getMeshByName(`ob-${ob.id}`)!;
+        mesh.computeWorldMatrix(true);
+        const pose = poseAt(ob, tick, phase, makePose());
+
+        // A point just inside the far end of the arm, taken from the mesh.
+        const local = new Vector3(ob.size.x / 2 - 0.6, 0, 0);
+        const tip = Vector3.TransformCoordinates(local, mesh.getWorldMatrix());
+
+        body.x = tip.x; body.y = tip.y - 0.86; body.z = tip.z;
+        hazardHit(body, pose, ob.size.x, ob.size.y, ob.size.z, out);
+        assert.ok(out.hit,
+          `tick ${tick}: standing at the drawn arm tip (${tip.x.toFixed(2)}, ` +
+          `${tip.z.toFixed(2)}) should register a hit`);
+
+        // ...and the mirror of that point, about the pivot, must NOT hit -
+        // otherwise a symmetric bug would still pass the check above.
+        const mirrored = 2 * ob.pz - tip.z;
+        if (Math.abs(mirrored - tip.z) > 3) {
+          body.z = mirrored;
+          hazardHit(body, pose, ob.size.x, ob.size.y, ob.size.z, out);
+          assert.ok(!out.hit,
+            `tick ${tick}: the mirrored point (z=${mirrored.toFixed(2)}) must be clear`);
+        }
+      }
     }
     engine.dispose();
   });

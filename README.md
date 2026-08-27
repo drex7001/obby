@@ -20,15 +20,22 @@ and the match starts on its own. Alone, wait a few seconds and press `Enter` for
 a solo practice run.
 
 **Controls** — `WASD` move · `Space` jump (hold for height) · mouse look ·
-`R` respawn if you get stuck · click to capture the pointer.
+`R` respawn if you get stuck · click to capture the mouse.
+
+`Esc` releases the mouse, and so does Alt+Tab. The race carries on without you,
+so a prompt appears and clicking it takes control back — browsers refuse to
+re-capture the pointer without a fresh gesture, and Chrome additionally ignores
+the request for about a second after `Esc`, which the prompt retries through.
+While the mouse is released you stand still rather than running blind.
 
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Client and server together, with hot reload |
-| `npm test` | 31 tests: simulation, match flow, determinism |
+| `npm test` | 36 tests: simulation, match flow, rendering, determinism |
 | `npm run typecheck` | `tsc --noEmit` over everything |
 | `npm run build` | Builds `dist/client` and `dist/server` |
 | `npm run smoke` | Drives two real Chrome clients through a match |
+| `npm run smoke:lock` | Checks pointer-lock recovery and the render clock |
 
 ---
 
@@ -78,6 +85,24 @@ the server assigns from their first input and publishes. That mapping only has t
 client that quietly sends slightly fewer than 30 inputs a second would walk its
 own world-tick into the past, so the server smooths the observed offset and
 corrects it a tick at a time.
+
+### One rotation convention, checked across the seam
+
+The renderer and the simulation each rotate a box by yaw, in separate code.
+Babylon's `rotation.y` maps a box's local +Z to `(sin y, cos y)`; the collision
+code's `toLocal`/`toWorld` map it to `(-sin y, cos y)`. Hence `meshYaw()` — one
+negation, in one place.
+
+That seam is exactly where a bug can hide in plain sight, because both sides
+look self-consistent. `hazardHit` originally inverted with `cos(-yaw)` while
+every solid inverted with `cos(yaw)` — the same formula at the opposite angle,
+which put a push bar's hitbox at the *mirror image* of the bar being drawn. The
+two coincided twice per revolution; the rest of the time an invisible
+counter-sweeping bar knocked players over.
+
+`test/course.test.ts` now closes that seam directly: it takes a point from a
+mesh's own world matrix and asks the collider whether it is inside, then asks
+the same of the mirrored point so a symmetric bug cannot pass.
 
 ### What is predicted and what is not
 

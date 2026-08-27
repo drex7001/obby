@@ -39,6 +39,9 @@ export class UI {
   private nameInput = $<HTMLInputElement>("name-input");
   private joinStatus = $("join-status");
 
+  private resume = $("resume");
+  private resumeBtn = $<HTMLButtonElement>("resume-btn");
+
   private results = $("results");
   private resultsTitle = $("results-title");
   private resultsList = $<HTMLOListElement>("results-list");
@@ -81,6 +84,24 @@ export class UI {
     this.overlay.hidden = true;
     this.hud.hidden = false;
   }
+
+  // ----------------------------------------------------------------- resume
+
+  /**
+   * Clicking anywhere on the prompt counts, not just the button - after an
+   * Alt+Tab the natural thing to do is click back into the window, and that
+   * click should be the one that recaptures the mouse.
+   */
+  onResume(handler: () => void) {
+    this.resume.addEventListener("mousedown", handler);
+    this.resumeBtn.addEventListener("click", handler);
+  }
+
+  showResume() {
+    if (this.results.hidden) { this.resume.hidden = false; }
+  }
+
+  hideResume() { this.resume.hidden = true; }
 
   // -------------------------------------------------------------------- HUD
 
@@ -194,6 +215,7 @@ export class UI {
   // ---------------------------------------------------------------- results
 
   showResults(rows: BoardRow[], title: string) {
+    this.resume.hidden = true;
     this.resultsTitle.textContent = title;
     this.resultsList.replaceChildren(...rows.map((r) => {
       const li = document.createElement("li");

@@ -311,6 +311,26 @@ kbd {
 }
 .status.error { color: var(--bad); }
 
+/* --------------------------------------------------------- resume prompt */
+
+/* Lighter than the other overlays: the race is still visible behind it, which
+   is the point - you can see what you are missing. */
+.resume {
+  background: radial-gradient(120% 90% at 50% 40%, rgba(10, 14, 34, 0.5), rgba(4, 5, 14, 0.78));
+  backdrop-filter: blur(3px);
+  cursor: pointer;
+  z-index: 9;
+}
+.resume .panel { width: min(360px, 88vw); padding: 26px 28px; }
+.resume-title {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.resume .tagline { margin: 8px 0 20px; }
+.resume .status { margin-top: 12px; }
+
 /* ------------------------------------------------------------------ standings */
 
 .results .panel { text-align: left; }

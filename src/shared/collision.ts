@@ -225,7 +225,12 @@ export function hazardHit(
   out.hit = false; out.nx = 0; out.nz = 0;
 
   const hx = sx / 2, hy = sy / 2, hz = sz / 2;
-  const cosY = Math.cos(-pose.yaw), sinY = Math.sin(-pose.yaw);
+  // NOTE the sign. These feed the same formulae `toLocal`/`toWorld` use, so they
+  // must take the same angle those do. Passing -yaw here instead mirrors the
+  // hitbox about the obstacle's Z axis: a push bar's mesh sweeps one way while
+  // its collider sweeps the other, meeting only twice per revolution, and
+  // players get hit by a bar they can see they are clear of.
+  const cosY = Math.cos(pose.yaw), sinY = Math.sin(pose.yaw);
   const cosR = Math.cos(-pose.roll), sinR = Math.sin(-pose.roll);
 
   let bestDepth = -1;

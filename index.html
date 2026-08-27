@@ -56,6 +56,17 @@
       </div>
     </div>
 
+    <!-- Shown whenever the pointer lock is released (Esc, Alt+Tab, focus loss).
+         The race carries on without you, so this is a prompt, not a pause. -->
+    <div id="resume" class="overlay resume" hidden>
+      <div class="panel">
+        <h2 class="resume-title">Mouse released</h2>
+        <p class="tagline">The race is still running without you.</p>
+        <button id="resume-btn" class="primary">Click to resume</button>
+        <p class="status">Press <kbd>Esc</kbd> any time to release it again.</p>
+      </div>
+    </div>
+
     <div id="results" class="overlay results" hidden>
       <div class="panel wide">
         <h2 id="results-title">Final standings</h2>

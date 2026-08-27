@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "test": "mocha -r tsx \"test/*.test.ts\" --exit --timeout 30000",
     "clean": "rimraf dist",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "smoke:lock": "node tools/lock-check.mjs"
   },
   "license": "UNLICENSED",
   "dependencies": {

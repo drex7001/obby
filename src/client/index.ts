@@ -136,6 +136,14 @@ async function connect(name: string) {
   ui.enterGame();
   void keys.lock();
 
+  // Escape, Alt+Tab and losing window focus all drop the pointer lock, and the
+  // browser will not give it back without a fresh gesture - so ask for one
+  // instead of leaving the player with a camera that no longer turns.
+  keys.onLockChange((locked) => {
+    if (locked) { ui.hideResume(); } else { ui.showResume(); }
+  });
+  ui.onResume(() => { void keys.lock(); });
+
   // Start a solo practice run once the lobby has let us.
   addEventListener("keydown", (e) => {
     if (e.key !== "Enter") { return; }
@@ -150,7 +158,9 @@ async function connect(name: string) {
   room.onMessage("raceOver", () => { /* results are driven from state.phase */ });
 
   // ------------------------------------------------------------- render loop
-  let lastNow = performance.now();
+  // Deliberately unset: the first frame seeds it, so no wall-clock gap between
+  // wiring up and the first animation frame is ever accumulated.
+  let lastNow = -1;
   let renderAcc = 0;
   let lastSeed = room.state.seed;
   let lastRound = room.state.round;
@@ -181,6 +191,7 @@ async function connect(name: string) {
   }
 
   function frame(now: number) {
+    if (lastNow < 0) { lastNow = now; }
     const dtMs = Math.min(now - lastNow, 100);
     lastNow = now;
     const dt = dtMs / 1000;
@@ -219,12 +230,10 @@ async function connect(name: string) {
       input.send();
     }
     renderAcc = clamp(renderAcc - steps * STEP_MS, 0, STEP_MS);
-    const alpha = renderAcc / STEP_MS;
 
-    // The world tick our own predicted body currently sits at. Drawing the
-    // course at exactly this tick is what makes riding a moving platform look
-    // welded rather than sliding.
-    const renderTick = world.tickBase + input.sentCount + alpha;
+    // The world tick our own predicted body currently sits at, so the course is
+    // drawn at the instant the collision resolved against it.
+    const renderTick = world.tickBase + input.sentCount + renderAcc / STEP_MS;
 
     course.update(renderTick, phase);
     course.setReached(self.checkpoint);
@@ -360,6 +369,13 @@ async function connect(name: string) {
       }
     }
 
+    // Reconciled every frame rather than only on the lock-change event. The
+    // initial lock request can be refused outright (a rate-limited re-lock, a
+    // browser that wants its own gesture), and that never fires a change event -
+    // which would strand the player with a camera that does not turn and no
+    // prompt telling them how to get it back.
+    if (!keys.pointerLocked) { ui.showResume(); }
+
     ui.tickCallout();
   }
 
@@ -388,6 +404,7 @@ async function connect(name: string) {
       falls: self.falls,
     },
     predicted: { x: me.value("x"), y: me.value("y"), z: me.value("z") },
+    tickBase: self.tickBase,
     sentCount: input.sentCount,
     lastProcessed: input.lastProcessed,
     fps: stage.engine.getFps(),
