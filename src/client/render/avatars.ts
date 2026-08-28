@@ -1,6 +1,10 @@
 /**
  * Runner avatars and their projected nameplates.
  *
+ * The character itself lives in `runner.ts`; this file owns the set of them —
+ * creating one per player in the room, placing it, feeding the pose, and
+ * tearing it down when someone leaves.
+ *
  * Note the yaw convention differs from the course's: a player's `yaw` is the
  * CAMERA heading, whose forward is `(sin yaw, cos yaw)` - the same mapping
  * Babylon's `rotation.y` uses. So avatars take yaw straight, while course
@@ -9,11 +13,10 @@
  */
 
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
-import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 
 import { PLAYER_COLOURS, type Stage } from "./scene.js";
-import { PLAYER_HEIGHT, PLAYER_RADIUS } from "../../shared/constants.js";
+import { Runner } from "./runner.js";
+import { PLAYER_HEIGHT, RUN_SPEED } from "../../shared/constants.js";
 import { clamp } from "../../shared/math.js";
 
 /** The projection call wants a world matrix; our points are already in world space. */
@@ -26,6 +29,7 @@ export interface AvatarView {
   x: number; y: number; z: number;
   yaw: number;
   vy: number;
+  grounded: boolean;
   respawning: boolean;
   finished: boolean;
   rank: number;
@@ -34,10 +38,12 @@ export interface AvatarView {
 }
 
 interface Avatar {
-  body: Mesh;
-  visor: Mesh;
+  rig: Runner;
   plate: HTMLDivElement;
   colour: number;
+  /** Last frame's position, so the rig can be posed from ground speed. */
+  px: number;
+  pz: number;
 }
 
 export class Avatars {
@@ -52,27 +58,7 @@ export class Avatars {
   }
 
   private create(view: AvatarView): Avatar {
-    const scene = this.stage.scene;
-
-    const body = MeshBuilder.CreateCapsule(`p-${view.sessionId}`, {
-      height: PLAYER_HEIGHT,
-      radius: PLAYER_RADIUS,
-      tessellation: 14,
-      capSubdivisions: 5,
-    }, scene);
-    body.material = this.stage.playerMaterial(view.colour, view.self);
-    body.isPickable = false;
-    this.stage.castsAndReceives(body, true, false);
-
-    // A wedge on the front so which way a runner is facing is legible even at
-    // the far end of the course.
-    const visor = MeshBuilder.CreateBox(`v-${view.sessionId}`, {
-      width: 0.46, height: 0.2, depth: 0.34,
-    }, scene);
-    visor.material = this.stage.visorMaterial(view.colour);
-    visor.isPickable = false;
-    visor.parent = body;
-    visor.position.set(0, PLAYER_HEIGHT * 0.22, PLAYER_RADIUS * 0.92);
+    const rig = new Runner(this.stage, view.sessionId, view.colour, view.self);
 
     const plate = document.createElement("div");
     plate.className = "plate";
@@ -84,7 +70,9 @@ export class Avatars {
     plate.append(pip, label);
     this.plateHost.appendChild(plate);
 
-    const avatar: Avatar = { body, visor, plate, colour: view.colour };
+    const avatar: Avatar = {
+      rig, plate, colour: view.colour, px: view.x, pz: view.z,
+    };
     this.avatars.set(view.sessionId, avatar);
     return avatar;
   }
@@ -92,14 +80,16 @@ export class Avatars {
   private destroy(sessionId: string) {
     const avatar = this.avatars.get(sessionId);
     if (!avatar) { return; }
-    avatar.body.dispose();
+    avatar.rig.dispose();
     avatar.plate.remove();
     this.avatars.delete(sessionId);
   }
 
-  /** Reconcile the avatar set with `views`, then place everything. */
+  /** Reconcile the avatar set with `views`, then place and pose everything. */
   update(views: AvatarView[], showSelf: boolean) {
     const live = new Set<string>();
+    // Clamped so a stalled tab or a single long frame cannot fling the rig.
+    const dt = clamp(this.stage.engine.getDeltaTime() / 1000, 1 / 240, 1 / 15);
 
     for (const view of views) {
       live.add(view.sessionId);
@@ -107,29 +97,38 @@ export class Avatars {
       if (!avatar) {
         avatar = this.create(view);
       } else if (avatar.colour !== view.colour) {
-        avatar.body.material = this.stage.playerMaterial(view.colour, view.self);
+        avatar.rig.setColour(view.colour, view.self);
         avatar.colour = view.colour;
       }
 
+      // Ground speed comes from the position delta rather than the wire: `vx`
+      // and `vz` are not replicated, and a respawn teleport would read as a
+      // sprint, so that frame is pinned to a standstill instead.
+      const step = Math.hypot(view.x - avatar.px, view.z - avatar.pz);
+      const speed = view.respawning ? 0 : clamp(step / dt, 0, RUN_SPEED * 1.4);
+      avatar.px = view.x;
+      avatar.pz = view.z;
+
       const visible = view.connected && (showSelf || !view.self);
-      avatar.body.setEnabled(visible);
+      avatar.rig.root.setEnabled(visible);
       if (!visible) { avatar.plate.style.display = "none"; continue; }
 
-      // The capsule's origin is its centre; the simulation's is the feet.
-      avatar.body.position.set(view.x, view.y + PLAYER_HEIGHT / 2, view.z);
-      avatar.body.rotation.y = view.yaw;
+      avatar.rig.root.position.set(view.x, view.y, view.z);
+      avatar.rig.root.rotation.y = view.yaw;
+      avatar.rig.pose(dt, speed, view.vy, !view.grounded, view.finished);
 
       // Squash and stretch, driven straight off vertical speed. Cheap, and it
-      // does more for how a jump reads than any amount of extra geometry.
+      // does more for how a jump reads than any amount of extra geometry. The
+      // rig's origin is at the feet, so the stretch grows upward from them.
       const stretch = clamp(view.vy * 0.014, -0.14, 0.2);
-      avatar.body.scaling.set(1 - stretch * 0.5, 1 + stretch, 1 - stretch * 0.5);
+      avatar.rig.root.scaling.set(1 - stretch * 0.5, 1 + stretch, 1 - stretch * 0.5);
 
       if (view.respawning) {
         // Materialising back in at a checkpoint.
-        avatar.body.scaling.scaleInPlace(0.55);
-        avatar.body.visibility = 0.45;
+        avatar.rig.root.scaling.scaleInPlace(0.55);
+        avatar.rig.setVisibility(0.45);
       } else {
-        avatar.body.visibility = 1;
+        avatar.rig.setVisibility(1);
       }
 
       this.placePlate(avatar, view);

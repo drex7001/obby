@@ -196,7 +196,29 @@ export class Stage {
     return mat;
   }
 
-  /** Bright opaque trim for the avatar's facing wedge. */
+  /**
+   * A flat, shared material cached by key — the runner rig's leather, skin and
+   * eyes are identical on every player, so six runners still cost three
+   * materials rather than eighteen.
+   */
+  flatMaterial(key: string, hex: string, glow = 0, spec = 0.08): StandardMaterial {
+    const id = `flat-${key}`;
+    const cached = this.materials.get(id);
+    if (cached) { return cached; }
+
+    const base = Color3.FromHexString(hex);
+    const mat = new StandardMaterial(id, this.scene);
+    mat.diffuseColor = base;
+    mat.emissiveColor = glow ? base.scale(glow) : Color3.Black();
+    mat.specularColor = new Color3(1, 1, 1).scale(spec);
+    mat.specularPower = 48;
+    mat.ambientColor = base.scale(0.4);
+    mat.freeze();
+    this.materials.set(id, mat);
+    return mat;
+  }
+
+  /** Bright opaque trim, one shade paler than the runner's own colour. */
   visorMaterial(colour: number): StandardMaterial {
     const key = `visor-${colour}`;
     const cached = this.materials.get(key);

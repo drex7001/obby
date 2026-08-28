@@ -250,6 +250,7 @@ async function connect(name: string) {
         z: predict.value(player, "z"),
         yaw: predict.value(player, "yaw"),
         vy: predict.value(player, "vy"),
+        grounded: player.grounded,
         respawning: player.respawn > 0,
         finished: player.finished,
         rank: player.rank,
