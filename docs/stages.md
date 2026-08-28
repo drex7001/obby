@@ -161,7 +161,7 @@ exit gate matches the next section's entry; build time under 4 ms.
 
 # Stage 5 · The section pool
 
-*Content, authored to the contract in [stage-4-generator.md](specs/stage-4-generator.md). Sections themselves: [GDD §4.5–4.6](GDD.md#45--the-six-existing-sections-revised).*
+*Spec: [stage-5-sections.md](specs/stage-5-sections.md)*
 
 **Ships:** a course worth re-rolling.
 

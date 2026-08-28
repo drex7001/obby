@@ -30,7 +30,7 @@ their chain, and you interfere with the course by shooting it.
 | 2 | [stage-2-impact.md](specs/stage-2-impact.md) | **The landing and the Chain — the vertical slice** |
 | 3 | [stage-3-carve.md](specs/stage-3-carve.md) | Carve, carve hop, air control, launch start |
 | 4 | [stage-4-generator.md](specs/stage-4-generator.md) | Section registry, turning cursor, generation validity |
-| 5 | — | Content, authored to stage 4's contract |
+| 5 | [stage-5-sections.md](specs/stage-5-sections.md) | The section contract and the fourteen-section catalogue |
 | 6 | [stage-6-salvo.md](specs/stage-6-salvo.md) | Gun pickup, breakers, coins |
 | 7 | [stage-7-tether.md](specs/stage-7-tether.md) | The elastic tether and its release window |
 | 8 | [stage-8-recall.md](specs/stage-8-recall.md) | The recovery verb |

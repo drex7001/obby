@@ -2,8 +2,9 @@
 
 **Risk** Low technical / Medium content · Ships courses that actually vary.
 
-Design context: [GDD §4](../GDD.md#4--the-map). That chapter says *what* the
-sections are; this says how they are assembled. **The course does not branch**, so
+Design context: [GDD §4](../GDD.md#4--the-map). The sections themselves are
+specified in [stage-5-sections.md](stage-5-sections.md); this spec is the
+machinery that assembles them. **The course does not branch**, so
 there is no route graph here — a section contributes one centre-line segment and
 the existing arc-length progress model stands unchanged.
 
@@ -122,7 +123,7 @@ The ways a procedural generator desynchronises. Each has bitten real projects.
 2. Add the turning cursor and `Ramp.yaw` with every section still declaring
    `turn: 0`. Nothing changes visually; the machinery is proven.
 3. Turn on turns for one section, then more.
-4. Add new sections ([GDD §4.6](../GDD.md#46--new-sections)).
+4. Add new sections ([stage-5-sections.md](stage-5-sections.md)).
 
 Expect the *specific course* for a seed to change at step 1 — the seed now indexes
 a different space. Determinism is the invariant, not any particular course.
