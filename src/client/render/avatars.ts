@@ -30,6 +30,7 @@ export interface AvatarView {
   yaw: number;
   vy: number;
   grounded: boolean;
+  carving: boolean;
   respawning: boolean;
   finished: boolean;
   rank: number;
@@ -121,7 +122,8 @@ export class Avatars {
       // does more for how a jump reads than any amount of extra geometry. The
       // rig's origin is at the feet, so the stretch grows upward from them.
       const stretch = clamp(view.vy * 0.014, -0.14, 0.2);
-      avatar.rig.root.scaling.set(1 - stretch * 0.5, 1 + stretch, 1 - stretch * 0.5);
+      const crouch = view.carving ? 0.5 : 1;
+      avatar.rig.root.scaling.set(1 - stretch * 0.5, (1 + stretch) * crouch, 1 - stretch * 0.5);
 
       if (view.respawning) {
         // Materialising back in at a checkpoint.

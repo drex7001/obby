@@ -3,9 +3,11 @@ import { Room, type Client, type CloseCode, type StepContext } from "colyseus";
 import { Player, RaceInput, RaceState, type RacePhase } from "./schema/RaceState.js";
 import {
   COUNTDOWN_TICKS, FINISH_GRACE_TICKS, MAX_PLAYERS, MIN_PLAYERS,
-  RACE_LIMIT_TICKS, RESULTS_TICKS, SOLO_UNLOCK_TICKS, SUB_STEPS, TICK_RATE,
+  HEAVY_KNOCK, RACE_LIMIT_TICKS, RESULTS_TICKS,
+  PLAYER_RADIUS, SOLO_UNLOCK_TICKS, SUB_STEPS, TICK_RATE,
 } from "../shared/constants.js";
 import { inVolume } from "../shared/collision.js";
+import { sanitizeRaceInput } from "../shared/input.js";
 import {
   buildLevel, CRUMBLE_DELAY_TICKS, CRUMBLE_GONE_TICKS, type Level, lobbySlot,
 } from "../shared/level.js";
@@ -61,13 +63,7 @@ export class RaceRoom extends Room<{ state: RaceState; input: RaceInput }> {
      * rest of the match. Forcing every field to a finite value here means the
      * simulation cannot be handed a number it does not understand.
      */
-    sanitize: (f) => {
-      f.moveX = axis(f.moveX);
-      f.moveZ = axis(f.moveZ);
-      f.yaw = Number.isFinite(f.yaw) ? f.yaw : 0;
-      f.jump = !!f.jump;
-      f.respawn = !!f.respawn;
-    },
+    sanitize: (f) => { sanitizeRaceInput(f); },
   });
 
   private level!: Level;
@@ -96,9 +92,12 @@ export class RaceRoom extends Room<{ state: RaceState; input: RaceInput }> {
     others: [],
     onCrumble: (slot, tick) => this.touchCrumble(slot, tick),
     onPlate: (plate, tick) => this.touchPlate(plate, tick),
+    onHeavyPlate: (plate, tick) => this.touchPlate(plate, tick),
+    hasLandingContact: (x, y, z) => this.hasLandingContact(x, y, z),
     onRespawn: (voluntary) => {
       if (this.stepping && !voluntary) { this.stepping.falls += 1; }
     },
+    onHeavy: (x, y, z, radius, tick) => this.applyHeavy(x, y, z, radius, tick),
   };
 
   /**
@@ -304,6 +303,40 @@ export class RaceRoom extends Room<{ state: RaceState; input: RaceInput }> {
     this.state.plateTicks[plate] = until;
   }
 
+  /** Publish a Heavy shockwave as stamps on the victims' own simulation state. */
+  private applyHeavy(x: number, y: number, z: number, radius: number, tick: number) {
+    for (const [, victim] of this.state.players) {
+      if (victim === this.stepping || !victim.connected || victim.respawn > 0) { continue; }
+      if (victim.plantUntil >= tick) { continue; }
+      const dx = victim.x - x;
+      const dz = victim.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d > radius || Math.abs(victim.y - y) > 2.4) { continue; }
+      // Coincident runners need a stable direction. The lander's yaw is synced,
+      // so it remains deterministic and gives the victim a clear way out.
+      const nx = d > 1e-6 ? dx / d : Math.sin(this.stepping?.yaw ?? 0);
+      const nz = d > 1e-6 ? dz / d : Math.cos(this.stepping?.yaw ?? 0);
+      victim.knockTick = tick;
+      victim.knockX = nx * HEAVY_KNOCK;
+      victim.knockY = HEAVY_KNOCK * 0.38;
+      victim.knockZ = nz * HEAVY_KNOCK;
+    }
+  }
+
+  /** Contact during a landing window is server-authored, never interpolated client state. */
+  private hasLandingContact(x: number, y: number, z: number): boolean {
+    const minDistance = PLAYER_RADIUS * 2;
+    for (const [, other] of this.state.players) {
+      if (other === this.stepping || !other.connected || other.respawn > 0) { continue; }
+      const dx = x - other.x;
+      const dz = z - other.z;
+      if (Math.abs(y - other.y) <= 1.6 && dx * dx + dz * dz < minDistance * minDistance) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ================================================================== scoring
 
   private detectFinishes(tick: number) {
@@ -467,6 +500,19 @@ export class RaceRoom extends Room<{ state: RaceState; input: RaceInput }> {
       player.stun = 0; player.respawn = 0;
       player.checkpoint = -1;
       player.progress = 0;
+      player.chain = 0;
+      player.impactBuf = 0;
+      player.heavyHeld = false;
+      player.heavyArmed = false;
+      player.heavySince = -1;
+      player.plantUntil = -1;
+      player.chainDecayUntil = -1;
+      player.carving = false;
+      player.carveUntil = -1;
+      player.carveCool = -1;
+      player.hopWindow = 0;
+      player.knockTick = -1;
+      player.knockX = 0; player.knockY = 0; player.knockZ = 0;
       player.rank = 0;
       player.finished = false;
       player.finishMs = 0;
@@ -516,12 +562,6 @@ export class RaceRoom extends Room<{ state: RaceState; input: RaceInput }> {
     for (let c = 0; c < MAX_PLAYERS; c++) { if (!taken.has(c)) { return c; } }
     return 0;
   }
-}
-
-/** Coerce a wire axis to exactly -1, 0 or 1 - never NaN, never undefined. */
-function axis(v: unknown): -1 | 0 | 1 {
-  const n = typeof v === "number" && Number.isFinite(v) ? v : 0;
-  return n > 0 ? 1 : n < 0 ? -1 : 0;
 }
 
 const NAME_MAX = 14;

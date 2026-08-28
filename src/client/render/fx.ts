@@ -34,6 +34,10 @@ const TONES: Record<FxKind, { freq: number; to: number; ms: number; type: Oscill
   hit: { freq: 220, to: 70, ms: 250, type: "sawtooth", gain: 0.26 },
   respawn: { freq: 300, to: 760, ms: 260, type: "sine", gain: 0.2 },
   checkpoint: { freq: 620, to: 940, ms: 220, type: "triangle", gain: 0.24 },
+  perfect: { freq: 760, to: 1180, ms: 130, type: "triangle", gain: 0.28 },
+  fumble: { freq: 170, to: 80, ms: 210, type: "sawtooth", gain: 0.22 },
+  heavy: { freq: 90, to: 42, ms: 360, type: "sawtooth", gain: 0.34 },
+  hop: { freq: 510, to: 820, ms: 150, type: "triangle", gain: 0.22 },
 };
 
 const TINTS: Record<FxKind, string> = {
@@ -42,6 +46,10 @@ const TINTS: Record<FxKind, string> = {
   hit: "#ff6b8a",
   respawn: "#6ee7ff",
   checkpoint: "#6ee787",
+  perfect: "#fff1a6",
+  fumble: "#ff9b78",
+  heavy: "#ffcf72",
+  hop: "#b9f6ff",
 };
 
 export class Fx {

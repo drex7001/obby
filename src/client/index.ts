@@ -49,6 +49,9 @@ const SIM_FIELDS = [
   "x", "y", "z", "vx", "vy", "vz", "yaw",
   "grounded", "groundId", "coyote", "jumpBuf", "jumpHeld",
   "stun", "respawn", "checkpoint", "progress",
+  "chain", "impactBuf", "heavyHeld", "heavyArmed", "heavySince", "plantUntil", "chainDecayUntil",
+  "carving", "carveUntil", "carveCool", "hopWindow",
+  "knockTick", "knockX", "knockY", "knockZ",
 ] as const;
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement;
@@ -224,7 +227,11 @@ async function connect(name: string) {
       input.data.moveX = keys.moveX;
       input.data.moveZ = keys.moveZ;
       input.data.yaw = keys.yaw;
+      input.data.pitch = keys.pitch;
       input.data.jump = keys.jump;
+      input.data.action = keys.action;
+      input.data.alt = keys.alt;
+      input.data.use = keys.use;
       // One-shot: only the first step of this frame carries the press.
       input.data.respawn = i === 0 && wantRespawn;
       input.send();
@@ -251,6 +258,7 @@ async function connect(name: string) {
         yaw: predict.value(player, "yaw"),
         vy: predict.value(player, "vy"),
         grounded: player.grounded,
+        carving: player.carving,
         respawning: player.respawn > 0,
         finished: player.finished,
         rank: player.rank,
@@ -398,6 +406,9 @@ async function connect(name: string) {
       tickBase: self.tickBase,
       x: self.x, y: self.y, z: self.z,
       grounded: self.grounded,
+      chain: self.chain,
+      carving: self.carving,
+      hopWindow: self.hopWindow,
       checkpoint: self.checkpoint,
       progress: self.progress,
       rank: self.rank,

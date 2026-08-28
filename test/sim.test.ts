@@ -35,12 +35,19 @@ function player(over: Partial<SimState> = {}): SimState {
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0,
     grounded: true, groundId: 0, coyote: 0, jumpBuf: 0, jumpHeld: false,
     stun: 0, respawn: 0, checkpoint: -1, progress: 0,
+    chain: 0, impactBuf: 0, heavyHeld: false, heavyArmed: false, heavySince: -1,
+    plantUntil: -1, chainDecayUntil: -1,
+    carving: false, carveUntil: -1, carveCool: -1, hopWindow: 0,
+    knockTick: -1, knockX: 0, knockY: 0, knockZ: 0,
     ...over,
   };
 }
 
-const idle: SimInput = { moveX: 0, moveZ: 0, yaw: 0, jump: false, respawn: false };
-const forward: SimInput = { moveX: 0, moveZ: 1, yaw: 0, jump: false, respawn: false };
+const idle: SimInput = {
+  moveX: 0, moveZ: 0, yaw: 0, pitch: 0, jump: false,
+  action: false, alt: false, use: false, respawn: false,
+};
+const forward: SimInput = { ...idle, moveZ: 1 };
 
 function run(state: SimState, cmd: SimInput, world: SimWorld, from: number, ticks: number) {
   for (let i = 0; i < ticks; i++) {
@@ -326,7 +333,11 @@ describe("rollback determinism", () => {
         moveX: (i % 7 === 0 ? 1 : i % 5 === 0 ? -1 : 0) as -1 | 0 | 1,
         moveZ: 1,
         yaw: Math.sin(i * 0.13) * 0.9,
+        pitch: Math.sin(i * 0.07) * 0.4,
         jump: i % 11 === 0,
+        action: i % 17 < 4,
+        alt: i % 13 < 5,
+        use: i % 19 === 0,
         respawn: false,
       });
     }

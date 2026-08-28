@@ -16,9 +16,9 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 
 import { damp } from "../shared/math.js";
 import { PLAYER_HEIGHT } from "../shared/constants.js";
-import { type BoxLike, rayBoxDistance } from "../shared/collision.js";
+import { raycastWorld, type RayHit } from "../shared/collision.js";
 import type { Level } from "../shared/level.js";
-import { isActiveAt, makePose, poseAt, type WorldPhase } from "../shared/obstacles.js";
+import type { WorldPhase } from "../shared/obstacles.js";
 import type { Stage } from "./render/scene.js";
 
 const BOOM = 7.4;
@@ -27,8 +27,10 @@ const EYE = PLAYER_HEIGHT * 0.78;
 /** Keep the near plane clear of whatever the boom stopped against. */
 const SKIN = 0.4;
 
-const probeBox: BoxLike = { x: 0, y: 0, z: 0, hx: 0, hy: 0, hz: 0, yaw: 0 };
-const probePose = makePose();
+const boomHit: RayHit = {
+  dist: -1, kind: "solid", obstacleId: 0,
+  x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0,
+};
 
 export class FollowCamera {
   private stage: Stage;
@@ -101,31 +103,7 @@ export class FollowCamera {
     dx: number, dy: number, dz: number,
     level: Level, phase: WorldPhase, tick: number,
   ): number {
-    let best = BOOM;
-
-    for (const s of level.solids) {
-      // The course is 300 units long; reject on Z before doing any real work.
-      if (Math.abs(s.z - oz) > s.hz + BOOM) { continue; }
-      probeBox.x = s.x; probeBox.y = s.y; probeBox.z = s.z;
-      probeBox.hx = s.hx; probeBox.hy = s.hy; probeBox.hz = s.hz;
-      probeBox.yaw = s.yaw;
-      const d = rayBoxDistance(ox, oy, oz, dx, dy, dz, probeBox, best);
-      if (d > 0 && d < best) { best = d; }
-    }
-
-    for (const ob of level.obstacles) {
-      if (ob.role !== "solid") { continue; }
-      if (Math.abs(ob.pz - oz) > ob.size.z / 2 + ob.size.x / 2 + BOOM) { continue; }
-      if (!isActiveAt(ob, tick, phase)) { continue; }
-      poseAt(ob, tick, phase, probePose);
-      if (!probePose.active) { continue; }
-      probeBox.x = probePose.x; probeBox.y = probePose.y; probeBox.z = probePose.z;
-      probeBox.hx = ob.size.x / 2; probeBox.hy = ob.size.y / 2; probeBox.hz = ob.size.z / 2;
-      probeBox.yaw = probePose.yaw;
-      const d = rayBoxDistance(ox, oy, oz, dx, dy, dz, probeBox, best);
-      if (d > 0 && d < best) { best = d; }
-    }
-
-    return best < BOOM ? Math.max(1.7, best - SKIN) : BOOM;
+    raycastWorld(level, phase, tick, ox, oy, oz, dx, dy, dz, BOOM, boomHit);
+    return boomHit.dist >= 0 ? Math.max(1.7, boomHit.dist - SKIN) : BOOM;
   }
 }

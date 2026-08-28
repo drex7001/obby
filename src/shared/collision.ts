@@ -13,8 +13,8 @@
  */
 
 import { PLAYER_HEIGHT, PLAYER_RADIUS } from "./constants.js";
-import type { Ramp, SolidBox, Volume } from "./level.js";
-import type { Pose } from "./obstacles.js";
+import type { Level, Ramp, SolidBox, Volume } from "./level.js";
+import { isActiveAt, makePose, poseAt, type Pose, type WorldPhase } from "./obstacles.js";
 
 /** Ledges no taller than this are climbed rather than blocked. */
 export const STEP_HEIGHT = 0.46;
@@ -22,10 +22,14 @@ export const STEP_HEIGHT = 0.46;
 const CONTACT_EPS = 1e-3;
 /** Scratch, module-scoped: these functions are on the hot path. */
 const tmp = { x: 0, y: 0, z: 0 };
+const rayBox: BoxLike = { x: 0, y: 0, z: 0, hx: 0, hy: 0, hz: 0, yaw: 0 };
+const rayPose = makePose();
 
 export interface Body {
   x: number; y: number; z: number;   // feet position
   vx: number; vy: number; vz: number;
+  /** Derived from carving; never networked separately. */
+  height: number;
   grounded: boolean;
   /** Obstacle id the body is standing on, or 0 for static ground / nothing. */
   groundId: number;
@@ -84,23 +88,48 @@ export function resolveVertical(body: Body, box: BoxLike): number {
   // The capsule's axis runs between the two cap centres; `slack` extends it
   // back out to the true silhouette at this horizontal offset.
   const lowY = body.y + PLAYER_RADIUS - slack;
-  const highY = body.y + PLAYER_HEIGHT - PLAYER_RADIUS + slack;
+  const highY = body.y + body.height - PLAYER_RADIUS + slack;
 
   const boxTop = box.y + box.hy;
   const boxBottom = box.y - box.hy;
   if (lowY >= boxTop || highY <= boxBottom) { return 0; }
 
-  const pushUp = boxTop - lowY;
-  const pushDown = highY - boxBottom;
-
-  if (pushUp <= pushDown) {
-    body.y += pushUp;
+  // A tall wall overlaps a runner's vertical span while the runner is beside
+  // it. It is a horizontal collision, not permission to eject the runner
+  // through the floor. Resolve Y only when the body approaches the top or
+  // underside within a capsule radius; the horizontal pass handles all other
+  // overlaps. The velocity selects the only physically valid side.
+  if (body.vy <= 0 && body.y >= boxTop - PLAYER_RADIUS) {
+    body.y += boxTop - lowY;
     if (body.vy < 0) { body.vy = 0; }
     return 1;
   }
-  body.y -= pushDown;
-  if (body.vy > 0) { body.vy = 0; }
-  return -1;
+  if (body.vy > 0 && body.y + body.height <= boxBottom + PLAYER_RADIUS) {
+    body.y -= highY - boxBottom;
+    body.vy = 0;
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * Pure overlap test used before expanding a carving capsule back to full height.
+ * It shares the exact rounded-cap footprint of `resolveVertical`, but does not
+ * move the body or alter velocity, so a failed stand-up is harmless.
+ */
+export function bodyOverlapsBox(body: Body, box: BoxLike): boolean {
+  const l = toLocal(body.x - box.x, body.z - box.z, box.yaw);
+  const dx = Math.max(Math.abs(l.x) - box.hx, 0);
+  const dz = Math.max(Math.abs(l.z) - box.hz, 0);
+  const horiz2 = dx * dx + dz * dz;
+  if (horiz2 >= PLAYER_RADIUS * PLAYER_RADIUS) { return false; }
+
+  const slack = Math.sqrt(PLAYER_RADIUS * PLAYER_RADIUS - horiz2);
+  const lowY = body.y + PLAYER_RADIUS - slack;
+  const highY = body.y + body.height - PLAYER_RADIUS + slack;
+  const boxTop = box.y + box.hy;
+  const boxBottom = box.y - box.hy;
+  return lowY < boxTop - CONTACT_EPS && highY > boxBottom + CONTACT_EPS;
 }
 
 /** Surface height of a ramp under (x, z), or `NaN` when outside its footprint. */
@@ -150,7 +179,7 @@ export function resolveHorizontal(body: Body, box: BoxLike, canStep: boolean): b
   // inside, which ejects it sideways by half a platform. A millimetre of slack
   // costs nothing and makes the resting case unambiguous.
   if (body.y >= boxTop - CONTACT_EPS) { return false; }
-  if (body.y + PLAYER_HEIGHT <= boxBottom + CONTACT_EPS) { return false; }
+  if (body.y + body.height <= boxBottom + CONTACT_EPS) { return false; }
 
   const l = toLocal(body.x - box.x, body.z - box.z, box.yaw);
   const lx = l.x, lz = l.z;
@@ -237,7 +266,7 @@ export function hazardHit(
   let bestLx = 0, bestLy = 0, bestLz = 0;
 
   for (let i = 0; i < 3; i++) {
-    const wy = body.y + PLAYER_RADIUS + (PLAYER_HEIGHT - PLAYER_RADIUS * 2) * (i / 2);
+    const wy = body.y + PLAYER_RADIUS + (body.height - PLAYER_RADIUS * 2) * (i / 2);
     const dx = body.x - pose.x;
     const dy = wy - pose.y;
     const dz = body.z - pose.z;
@@ -297,10 +326,10 @@ export function hazardHit(
 // ---------------------------------------------------------------------------
 
 /** Does the player's body overlap this axis-aligned volume? */
-export function inVolume(x: number, y: number, z: number, v: Volume): boolean {
+export function inVolume(x: number, y: number, z: number, v: Volume, height = PLAYER_HEIGHT): boolean {
   return Math.abs(x - v.x) <= v.hx + PLAYER_RADIUS
     && Math.abs(z - v.z) <= v.hz + PLAYER_RADIUS
-    && y + PLAYER_HEIGHT >= v.y - v.hy
+    && y + height >= v.y - v.hy
     && y <= v.y + v.hy;
 }
 
@@ -341,20 +370,155 @@ export function rayBoxDistance(
   let near = 0;
   let far = maxDist;
 
-  // One slab per axis; the ray hits only where all three intervals overlap.
-  const slab = (o: number, d: number, h: number): boolean => {
-    if (Math.abs(d) < 1e-9) { return Math.abs(o) <= h; }
-    const inv = 1 / d;
-    let t0 = (-h - o) * inv;
-    let t1 = (h - o) * inv;
+  // One slab per axis; written inline so this hot query does not allocate a
+  // closure for every ray-box test.
+  if (Math.abs(ldx) < 1e-9) {
+    if (Math.abs(lox) > box.hx) { return -1; }
+  } else {
+    const inv = 1 / ldx;
+    let t0 = (-box.hx - lox) * inv;
+    let t1 = (box.hx - lox) * inv;
     if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
     if (t0 > near) { near = t0; }
     if (t1 < far) { far = t1; }
-    return near <= far;
-  };
-
-  if (!slab(lox, ldx, box.hx)) { return -1; }
-  if (!slab(loy, dy, box.hy)) { return -1; }
-  if (!slab(loz, ldz, box.hz)) { return -1; }
+    if (near > far) { return -1; }
+  }
+  if (Math.abs(dy) < 1e-9) {
+    if (Math.abs(loy) > box.hy) { return -1; }
+  } else {
+    const inv = 1 / dy;
+    let t0 = (-box.hy - loy) * inv;
+    let t1 = (box.hy - loy) * inv;
+    if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
+    if (t0 > near) { near = t0; }
+    if (t1 < far) { far = t1; }
+    if (near > far) { return -1; }
+  }
+  if (Math.abs(ldz) < 1e-9) {
+    if (Math.abs(loz) > box.hz) { return -1; }
+  } else {
+    const inv = 1 / ldz;
+    let t0 = (-box.hz - loz) * inv;
+    let t1 = (box.hz - loz) * inv;
+    if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
+    if (t0 > near) { near = t0; }
+    if (t1 < far) { far = t1; }
+    if (near > far) { return -1; }
+  }
   return near > 0 && near <= maxDist ? near : -1;
+}
+
+/** Result storage for the shared, allocation-free world ray query. */
+export interface RayHit {
+  /** Distance along the ray, or -1 when no collidable geometry was hit. */
+  dist: number;
+  kind: "solid" | "obstacle" | "ramp" | "anchor" | "breaker";
+  /** Static geometry has id 0. */
+  obstacleId: number;
+  x: number; y: number; z: number;
+  nx: number; ny: number; nz: number;
+}
+
+/** Fill a normal for a ray-box hit using the same yaw convention as collision. */
+function writeBoxHit(
+  out: RayHit, dist: number, kind: RayHit["kind"], obstacleId: number,
+  ox: number, oy: number, oz: number, dx: number, dy: number, dz: number,
+  box: BoxLike,
+) {
+  out.dist = dist;
+  out.kind = kind;
+  out.obstacleId = obstacleId;
+  out.x = ox + dx * dist;
+  out.y = oy + dy * dist;
+  out.z = oz + dz * dist;
+
+  const local = toLocal(out.x - box.x, out.z - box.z, box.yaw);
+  const faceX = Math.abs(Math.abs(local.x) - box.hx);
+  const faceY = Math.abs(Math.abs(out.y - box.y) - box.hy);
+  const faceZ = Math.abs(Math.abs(local.z) - box.hz);
+  let lx = 0, ly = 0, lz = 0;
+  if (faceX <= faceY && faceX <= faceZ) { lx = local.x < 0 ? -1 : 1; }
+  else if (faceY <= faceZ) { ly = out.y < box.y ? -1 : 1; }
+  else { lz = local.z < 0 ? -1 : 1; }
+  const world = toWorld(lx, lz, box.yaw);
+  out.nx = world.x;
+  out.ny = ly;
+  out.nz = world.z;
+}
+
+/** Safe broad phase for a finite ray: a box outside either expanded axis cannot hit. */
+function nearRayBox(box: BoxLike, ox: number, oy: number, oz: number, maxDist: number): boolean {
+  const horizontal = Math.hypot(box.hx, box.hz);
+  return Math.abs(box.x - ox) <= maxDist + horizontal
+    && Math.abs(box.y - oy) <= maxDist + box.hy
+    && Math.abs(box.z - oz) <= maxDist + horizontal;
+}
+
+/**
+ * Deterministic query against the simulation's collidable world. Callers own
+ * `out`; no result object, temporary vector, or Babylon scene query is created
+ * in the hot path. Dynamic solids are evaluated at the supplied fractional
+ * world tick, exactly as `stepPlayer()` does during a sub-step.
+ */
+export function raycastWorld(
+  level: Level, phase: WorldPhase, tick: number,
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  maxDist: number, out: RayHit,
+): RayHit {
+  out.dist = -1;
+  out.kind = "solid";
+  out.obstacleId = 0;
+  out.x = ox; out.y = oy; out.z = oz;
+  out.nx = 0; out.ny = 0; out.nz = 0;
+  let best = maxDist;
+
+  for (const solid of level.solids) {
+    rayBox.x = solid.x; rayBox.y = solid.y; rayBox.z = solid.z;
+    rayBox.hx = solid.hx; rayBox.hy = solid.hy; rayBox.hz = solid.hz; rayBox.yaw = solid.yaw;
+    if (!nearRayBox(rayBox, ox, oy, oz, best)) { continue; }
+    const dist = rayBoxDistance(ox, oy, oz, dx, dy, dz, rayBox, best);
+    if (dist < 0) { continue; }
+    best = dist;
+    writeBoxHit(out, dist, "solid", 0, ox, oy, oz, dx, dy, dz, rayBox);
+  }
+
+  // Ramps collide as their walkable plane, not as the renderer's decorative
+  // thick slab. That keeps rays and movement on one geometry definition.
+  for (const ramp of level.ramps) {
+    const rise = ramp.y1 - ramp.y0;
+    const length = ramp.hz * 2;
+    const slope = rise / length;
+    const startZ = ramp.z - ramp.hz;
+    const denom = dy - slope * dz;
+    if (Math.abs(denom) < 1e-9) { continue; }
+    const dist = (ramp.y0 - slope * (oz - startZ) - oy) / denom;
+    if (dist <= 0 || dist > best) { continue; }
+    const x = ox + dx * dist;
+    const z = oz + dz * dist;
+    if (Math.abs(x - ramp.x) > ramp.hx || Math.abs(z - ramp.z) > ramp.hz) { continue; }
+    best = dist;
+    out.dist = dist;
+    out.kind = "ramp";
+    out.obstacleId = 0;
+    out.x = x; out.y = oy + dy * dist; out.z = z;
+    const normalLength = Math.hypot(1, slope);
+    out.nx = 0; out.ny = 1 / normalLength; out.nz = -slope / normalLength;
+  }
+
+  for (const ob of level.obstacles) {
+    if (ob.role !== "solid" || !isActiveAt(ob, tick, phase)) { continue; }
+    poseAt(ob, tick, phase, rayPose);
+    if (!rayPose.active) { continue; }
+    rayBox.x = rayPose.x; rayBox.y = rayPose.y; rayBox.z = rayPose.z;
+    rayBox.hx = ob.size.x / 2; rayBox.hy = ob.size.y / 2; rayBox.hz = ob.size.z / 2;
+    rayBox.yaw = rayPose.yaw;
+    if (!nearRayBox(rayBox, ox, oy, oz, best)) { continue; }
+    const dist = rayBoxDistance(ox, oy, oz, dx, dy, dz, rayBox, best);
+    if (dist < 0) { continue; }
+    best = dist;
+    writeBoxHit(out, dist, "obstacle", ob.id, ox, oy, oz, dx, dy, dz, rayBox);
+  }
+
+  return out;
 }

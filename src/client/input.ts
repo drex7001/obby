@@ -7,9 +7,7 @@
  */
 
 import { clamp, wrapAngle } from "../shared/math.js";
-
-const PITCH_MIN = -0.42;
-const PITCH_MAX = 1.02;
+import { PITCH_MAX, PITCH_MIN } from "../shared/constants.js";
 
 /**
  * Chrome locks out `requestPointerLock()` for a moment after the user presses
@@ -22,7 +20,7 @@ const RELOCK_RETRY_MS = 1400;
 export class Input {
   /** Camera heading, radians. Forward is `(sin yaw, cos yaw)`. */
   yaw = 0;
-  /** Camera elevation, radians. Presentation only - never sent. */
+  /** Camera elevation, radians. Sent as shared simulation input. */
   pitch = 0.30;
 
   private held = new Set<string>();
@@ -135,6 +133,12 @@ export class Input {
   get moveX() { return this.locked ? this.axis(["a", "arrowleft"], ["d", "arrowright"]) : 0; }
   get moveZ() { return this.locked ? this.axis(["s", "arrowdown"], ["w", "arrowup"]) : 0; }
   get jump() { return this.locked && (this.held.has(" ") || this.held.has("space")); }
+  /** Primary future verb: tether/fire. */
+  get action() { return this.locked && (this.held.has("f") || this.held.has("q")); }
+  /** Secondary verb: Impact while airborne, Carve while grounded. */
+  get alt() { return this.locked && (this.held.has("shift") || this.held.has("control")); }
+  /** Context future verb: pickups, levers and plates. */
+  get use() { return this.locked && this.held.has("e"); }
 
   /**
    * True exactly once per press. Respawn is a one-shot action, and letting it

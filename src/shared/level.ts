@@ -82,6 +82,8 @@ export interface Checkpoint {
 export interface Plate {
   id: number;
   volume: Volume;
+  /** Standing runners hold normal plates; Heavy shockwaves fire Heavy plates. */
+  activation: "hold" | "heavy";
   /** Ticks the plate stays hot after the last touch. */
   holdTicks: number;
   label: string;
@@ -173,8 +175,11 @@ export function buildLevel(seed: number): Level {
   [12, 24, 36].forEach((z, i) => {
     obstacles.push({
       id: nextId++, kind: "spinner", role: "hazard", style: "bar",
-      size: { x: 20, y: 1.1, z: 1.2 },
-      px: 0, py: 0.62, pz: z,
+      // Raised and thin enough that a 0.86u carving capsule can pass below,
+      // while a standing capsule's middle still catches it. This is the first
+      // course element that explicitly teaches Carve.
+      size: { x: 20, y: 0.12, z: 1.2 },
+      px: 0, py: 1.35, pz: z,
       speed: barSpeeds[i] * barDirs[i],
       phase: i * 0.31,
       // Enough to spoil a run, not enough to reliably clear a 22-wide track -
@@ -317,12 +322,19 @@ export function buildLevel(seed: number): Level {
   const bridgeArmed = rand() < 0.72;
   plates.push({
     id: 0, volume: vol(6.5, 0.7, 210, 4, 1.8, 4),
-    holdTicks: Math.round(PLATE_HOLD_SECONDS * TICK_RATE), label: "Bridge",
+    activation: "hold", holdTicks: Math.round(PLATE_HOLD_SECONDS * TICK_RATE), label: "Bridge",
   });
   solids.push({
     x: 6.5, y: -0.1, z: 210, hx: 2, hy: 0.2, hz: 2, yaw: 0,
     style: bridgeArmed ? "plate" : "plate-dead",
   });
+  // The first hand-authored Heavy target. It is only fired by an Impact
+  // shockwave, never by merely standing on it, so it teaches the distinction.
+  plates.push({
+    id: 1, volume: vol(0, 0.25, 54, 5, 0.5, 5), activation: "heavy",
+    holdTicks: TICK_RATE, label: "Impact Plate",
+  });
+  solids.push({ x: 0, y: -0.08, z: 54, hx: 2.5, hy: 0.08, hz: 2.5, yaw: 0, style: "impact-plate" });
   if (bridgeArmed) {
     obstacles.push({
       id: nextId++, kind: "hinge", role: "solid", style: "swingbridge",

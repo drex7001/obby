@@ -3,6 +3,13 @@
 **Risk** Low-Medium · Ships the vertical slice, and the decision point for the
 whole design.
 
+**Implementation status — implemented; acceptance validation ongoing.** Perfect, Neutral, Fumble, and committed
+Heavy landings are predicted in the shared step; Heavy victims receive
+server-authored stamped impulses, and Heavy-only plates and crumble floors
+receive the same authoritative tick stamps. The associated Chain behavior is
+covered in [`impact-chain.test.ts`](../../test/stages/impact-chain.test.ts). The
+landing-feel gate remains a focused manual playtest.
+
 Design context: [GDD §3.2](../GDD.md#32--impact--the-landing-and-the-metronome)
 and [§2.4](../GDD.md#24--the-chain).
 

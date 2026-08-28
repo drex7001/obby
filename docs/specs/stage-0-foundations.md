@@ -2,6 +2,13 @@
 
 **Risk** Low · Ships an identical game, now provable.
 
+**Implementation status — implemented; acceptance validation ongoing.** The delivered safety net is covered by
+[`foundations.test.ts`](../../test/stages/foundations.test.ts): seeded full-state
+snapshot/replay fuzzing plus static and dynamic shared-raycast checks. The input
+packet and sanitiser now carry `pitch`, `action`, `alt`, and `use` with safe
+defaults. The reusable packet normalizer is
+[`src/shared/input.ts`](../../src/shared/input.ts).
+
 Four pieces of plumbing. Nothing is player-visible; if a change here shows up in a
 race, it is a bug. Design context: [GDD](../GDD.md). Rules:
 [engineering.md](../engineering.md).

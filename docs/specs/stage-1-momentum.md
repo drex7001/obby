@@ -2,6 +2,12 @@
 
 **Risk** Medium · Ships the same game with a body that has weight.
 
+**Implementation status — implemented; acceptance validation ongoing.** The shared simulation now runs three
+sub-steps and implements the specified falloff acceleration, directional target
+scaling, slope acceleration, and overspeed decay. Automated coverage lives in
+[`momentum.test.ts`](../../test/stages/momentum.test.ts). The twenty-round feel
+gate remains a deliberate manual tuning check.
+
 Design context: [GDD §2](../GDD.md#2--the-player). **No schema change at all** —
 this stage is physics inside the existing step plus a constants file. Overspeed
 needs no field: it is just velocity above the cap, and velocity is already synced.

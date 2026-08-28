@@ -16,6 +16,7 @@ import { chromium } from "playwright-core";
 
 const URL = process.env.GAME_URL ?? "http://localhost:5173/";
 const SHOTS = process.env.SHOT_DIR ?? ".";
+const STAGE3_ONLY = process.env.SMOKE_STAGE3_ONLY === "1";
 
 const browser = await chromium.launch({
   channel: "chrome",
@@ -75,6 +76,33 @@ const racing = await snap(a);
 console.log("after countdown ->", racing.phase, "raceStartTick", racing.raceStartTick);
 await a.screenshot({ path: `${SHOTS}/01-race-start.png` });
 
+if (STAGE3_ONLY) {
+  console.log("--- stage 3 carve hop ---");
+  // Clear the start gate, then keep Shift held long enough to enter Carve.
+  await hold(a, ["w"], 1800);
+  await a.keyboard.down("w");
+  await a.keyboard.down("Shift");
+  await wait(700);
+  const carving = await snap(a);
+  console.log("A carving:", JSON.stringify(carving.self));
+  if (!carving.self.carving) throw new Error("expected Shift at speed to enter Carve");
+
+  await a.keyboard.up("Shift");
+  await wait(80);
+  await a.keyboard.down("Space");
+  await wait(100);
+  await a.keyboard.up("Space");
+  await wait(250);
+  await a.keyboard.up("w");
+  const hopped = await snap(a);
+  console.log("A after carve hop:", JSON.stringify(hopped.self));
+  if (hopped.self.chain < 1) throw new Error("expected the carve hop to add Chain");
+
+  await browser.close();
+  if (errors.length > 0) throw new Error(errors.join("\n"));
+  process.exit(0);
+}
+
 console.log("--- running forward ---");
 await hold(a, ["w"], 4000);
 const ran = await snap(a);
@@ -100,6 +128,25 @@ async function page_jump(page) {
 const jumped = await snap(a);
 console.log("A after jumps:", JSON.stringify(jumped));
 await a.screenshot({ path: `${SHOTS}/04-jump.png` });
+
+// Stage 3: build enough ground speed to enter Carve, then release and jump
+// inside the generous hop window. This deliberately drives held input, exactly
+// like the real wire packet, rather than reaching into game state.
+console.log("--- carve hop ---");
+await a.keyboard.down("w");
+await a.keyboard.down("Shift");
+await wait(800);
+const carving = await snap(a);
+console.log("A carving:", JSON.stringify(carving.self));
+await a.keyboard.up("Shift");
+await wait(80);
+await a.keyboard.down("Space");
+await wait(100);
+await a.keyboard.up("Space");
+await wait(250);
+await a.keyboard.up("w");
+const hopped = await snap(a);
+console.log("A after carve hop:", JSON.stringify(hopped.self));
 
 console.log("--- results screen ---");
 await a.evaluate(() => {

@@ -3,6 +3,29 @@
 Twelve stages. **Every stage ships a playable game, and no stage invalidates the
 one before it.** You can stop after any of them and have something coherent.
 
+## Current implementation status
+
+Stages 0–3 have their specified systems implemented and automated coverage for
+their deterministic behavior. The remaining acceptance work is intentionally
+manual: Stage 1 still needs its twenty-round momentum feel pass, and Stage 2
+still needs a focused landing-feel playtest. The table therefore records
+implementation status, not a claim that every playtest gate has been signed off.
+
+| Stage | Status | Delivered systems | Primary coverage |
+| --- | --- | --- | --- |
+| 0 · Safety net | Implemented | Extended input packet, full-state rollback fuzzing, tick-stamp defaults, shared world raycast | `test/stages/foundations.test.ts` |
+| 1 · Momentum | Implemented | 90 Hz collision, falloff acceleration, directional targets, slope acceleration, overspeed decay | `test/stages/momentum.test.ts` |
+| 2 · Impact and Chain | Implemented | Perfect/neutral/fumble/Heavy landings, Chain, server-stamped victim impulses, Heavy plates and crumble triggers | `test/stages/impact-chain.test.ts` |
+| 3 · Carve | Implemented | Variable capsule height, stand-up clearance, dive, hop window, raised Gauntlet bar, Chain-scaled air control | `test/stages/carve.test.ts`; Stage 3 browser smoke |
+
+`npm test` runs all suites, and `SMOKE_STAGE3_ONLY=1 npm run smoke` drives two
+real clients through entering Carve and landing a carve hop.
+
+The packet contract is normalized in
+[`src/shared/input.ts`](../src/shared/input.ts), reusable simulation fixtures
+live under [`test/helpers/`](../test/helpers/), and stage-specific behavior is
+grouped by feature under [`test/stages/`](../test/stages/).
+
 ---
 
 ## The non-breaking rules

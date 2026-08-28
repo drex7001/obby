@@ -2,6 +2,13 @@
 
 **Risk** Medium — the collision refactor · Ships the second verb.
 
+**Implementation status — implemented; acceptance validation ongoing.** The capsule height is derived from
+Carve state throughout collision, with a safe stand-up clearance check, dive,
+Chain-scaled air control, and carve-hop Chain conversion. The raised Gauntlet
+bar and edge cases are covered in
+[`carve.test.ts`](../../test/stages/carve.test.ts); the focused browser smoke
+run performs a real two-client carve hop.
+
 Design context: [GDD §3.3](../GDD.md#33--carve--horizontal--distance).
 
 ---

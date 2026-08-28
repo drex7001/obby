@@ -19,8 +19,9 @@ Open the page in two tabs (or on two machines — the dev server binds to the LA
 and the match starts on its own. Alone, wait a few seconds and press `Enter` for
 a solo practice run.
 
-**Controls** — `WASD` move · `Space` jump (hold for height) · mouse look ·
-`R` respawn if you get stuck · click to capture the mouse.
+**Controls** — `WASD` move · `Space` jump (hold for height) · `Shift` Impact
+while airborne / Carve while grounded · mouse look · `R` respawn if you get
+stuck · click to capture the mouse.
 
 `Esc` releases the mouse, and so does Alt+Tab. The race carries on without you,
 so a prompt appears and clicking it takes control back — browsers refuse to
@@ -31,7 +32,7 @@ While the mouse is released you stand still rather than running blind.
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Client and server together, with hot reload |
-| `npm test` | 36 tests: simulation, match flow, rendering, determinism |
+| `npm test` | Simulation, match-flow, rendering, rollback, and stage-mechanic suites |
 | `npm run typecheck` | `tsc --noEmit` over everything |
 | `npm run build` | Builds `dist/client` and `dist/server` |
 | `npm run smoke` | Drives two real Chrome clients through a match |

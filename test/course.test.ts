@@ -115,7 +115,7 @@ describe("course rendering", () => {
     assert.ok(spinners.length > 0, "the course should have sweeping bars");
 
     const body: Body = {
-      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, grounded: true, groundId: 0,
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, height: 1.72, grounded: true, groundId: 0,
     };
     const out: HitNormal = { nx: 0, nz: 0, hit: false };
 

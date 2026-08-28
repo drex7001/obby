@@ -16,8 +16,16 @@ export const RaceInput = schema({
   /** Camera yaw. `t.angle()` is two bytes and wraps, and the reconciler replays
    *  the *decoded* value, so the lossy round-trip cannot desync prediction. */
   yaw: t.angle().default(0),
+  /** Camera elevation. It is clamped in shared constants and replayed exactly. */
+  pitch: t.angle().default(0),
   /** Held, not pressed - the step finds the edge so it replays identically. */
   jump: t.boolean().default(false),
+  /** Primary future action: tether / fire. Kept on the wire from Stage 0. */
+  action: t.boolean().default(false),
+  /** Secondary future action: Impact / Carve. */
+  alt: t.boolean().default(false),
+  /** Context future action: lever, pickup, plate. */
+  use: t.boolean().default(false),
   /** Voluntary "I am stuck" reset. */
   respawn: t.boolean().default(false),
 }, "RaceInput");
@@ -53,6 +61,35 @@ export const Player = schema({
   respawn: t.number().default(0),
   checkpoint: t.int8().default(-1),
   progress: t.number().default(0),
+
+  // ---- simulated: impact / chain -----------------------------------------
+  chain: t.uint8().default(0),
+  impactBuf: t.number().default(0),
+  /** Current held state of the secondary action; edge detection lives in step. */
+  heavyHeld: t.boolean().default(false),
+  /** Heavy stays committed after the eight-tick hold completes. */
+  heavyArmed: t.boolean().default(false),
+  /** Start stamp of the current Heavy hold, or -1 when cold. */
+  heavySince: t.int32().default(-1),
+  /** The lander cannot be displaced through this world tick. */
+  plantUntil: t.int32().default(-1),
+  /** Next conversion-free tick at which one Chain point may decay. */
+  chainDecayUntil: t.int32().default(-1),
+
+  // ---- simulated: carve ---------------------------------------------------
+  carving: t.boolean().default(false),
+  /** Automatic carve exit stamp, or -1 when cold. */
+  carveUntil: t.int32().default(-1),
+  /** Re-entry lockout stamp, or -1 when cold. */
+  carveCool: t.int32().default(-1),
+  /** Ticks remaining after standing in which a carve hop can fire. */
+  hopWindow: t.number().default(0),
+
+  // ---- server-stamped, victim-simulated impulses -------------------------
+  knockTick: t.int32().default(-1),
+  knockX: t.number().default(0),
+  knockY: t.number().default(0),
+  knockZ: t.number().default(0),
 
   // ---- server-owned: never predicted -------------------------------------
   /**

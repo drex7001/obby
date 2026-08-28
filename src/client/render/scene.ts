@@ -76,6 +76,7 @@ const STYLES: Record<string, StyleDef> = {
 
   plate: { hex: "#6ee787", glow: 0.3 },
   "plate-dead": { hex: "#454a60", glow: 0 },
+  "impact-plate": { hex: "#ffb14e", glow: 0.42, spec: 0.32 },
 
   bar: { hex: "#ff4b6e", glow: 0.4, spec: 0.28 },
   hammer: { hex: "#ff4062", glow: 0.4, spec: 0.28 },
