@@ -131,3 +131,91 @@ than lost.
 6. Relay.
 7. Progression, only if the loop has proven itself.
 8. Arena, only if PvP is still genuinely wanted.
+
+---
+
+## As built
+
+The deck in [`mutators.ts`](../../src/shared/mutators.ts), the tuning it varies
+in [`level.ts`](../../src/shared/level.ts), the structural half in
+[`generator.ts`](../../src/shared/generator.ts), the modes in
+[`RaceRoom.ts`](../../src/rooms/RaceRoom.ts), and the gates in
+[`test/stages/variation.test.ts`](../../test/stages/variation.test.ts).
+
+Order items 1-5 shipped: the migration, all twelve mutators, and four of the
+five modes. Items 6-8 did not, each for its own stated reason.
+
+### The migration was the first thing done, and it is enforced
+
+`Tuning` is a record on the `Level` carrying gravity, ground friction, chain
+decay, chain gain and shove strength, defaulted to the constants it shadows.
+`stepPlayer()` reads it and nothing else - and a test greps `movement.ts` for
+`GRAVITY`, `GROUND_FRICTION`, `CHAIN_DECAY_TICKS` and `PUSH_STRENGTH` and fails
+if any of them reappears. That is the trap the spec warns about, closed by
+something that cannot quietly rot.
+
+### One deviation: the deck is published, not derived
+
+The spec allows either ("drawn from the seed **or** synced as one small
+integer"), and this takes the second. `buildLevel(seed)` stays the clean game
+and keeps every guarantee stage 4 makes about it - seven sections, 280-340 u, no
+self-intersection - and a mutated round is one the room drew, published on
+`state.mutators`, and the client rebuilt from. Three reasons:
+
+1. **A mode may want to force or forbid part of the deck.** Collect wants
+   tokens; a future ranked mode might want none of it. Deriving from the seed
+   makes that impossible without a second channel anyway.
+2. **The stage-4 acceptance tests keep meaning what they meant.** They assert
+   properties of a clean course, and a seed that silently drew Marathon would
+   fail them for the right reason at the wrong time.
+3. **One string on the wire is cheaper than two implementations of a draw
+   rule** that have to stay identical forever.
+
+A test builds the room's course from the published deck and asserts it matches
+the room's own, byte for byte, because that is exactly what a client does.
+
+### Mirror is applied to the finished level, on purpose
+
+A reflection is an isometry with a sign flip, so *everything* angular has to
+flip with it: yaw, `baseYaw`, a spinner's direction, a hinge's swept angles, a
+pendulum's amplitude, a section's turn. Threading that through the emitters
+would mean getting it right in a dozen places and in every section written
+afterwards. Doing it once to the finished level is provably total, and the test
+walks every solid and every obstacle asserting both the position and the
+handedness flipped.
+
+### The four modes, and the one that did not ship
+
+| Mode | How it works |
+| --- | --- |
+| **Time attack** | The field is simply not there: `fillOthers` returns empty and landing contact is off, so there is no contact of any kind |
+| **Collect** | The finish line does not open until you are carrying `COLLECT_TARGET`. Tokens are coin pods - the prop that already means "worth going out of your way for" - scattered off the centre-line so each is a real detour |
+| **Survival** | One number. A kill plane advances as course progress from a fixed tick at a fixed rate, and anybody behind it is out |
+| **Hunt** | The runner in front is the hare; proximity scores, with a cooldown so a catch is a catch and not a hold |
+
+**Relay did not ship.** Two reasons, and the second is the real one. The spec
+puts it last in its own build-by-cost order and calls it "real match-flow work".
+And `Player` is at Colyseus' hard ceiling of 63 fields - adding one for a team
+means trading one away, which is a deliberate decision about what the schema is
+for rather than something a mode should quietly do on its way past. It is the
+one item in the stage whose cost is structural rather than incidental.
+
+### Progression and Arena were not started, as instructed
+
+Progression is gated in its own section: "do not start until the loop has proven
+itself", and its real cost is a database, accounts and an auth story in a
+project that deploys as one Vite server. Arena is explicitly "a design call, not
+a netcode project", and the design question it turns on - that a leader cannot
+look behind while running a hazard course - is not one an implementation
+answers. Both stay recorded rather than half-built.
+
+### Where it stands against the acceptance list
+
+Every item is covered except one. "No mutator makes a generated course
+incompletable - the bot sweep runs per mutator" needs the bot to be good enough
+for its completion rate to mean something, and at 44.5% it is not. What is
+asserted instead, under every mutator in turn, is the set of structural
+properties that make a course completable at all: enough sections, a bank per
+join, checkpoints that advance along the centre-line, a finish past all of them,
+and solid ground under every respawn point. When the bot reaches its bar, the
+sweep is a one-line change away from covering the rest.

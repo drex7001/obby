@@ -16,6 +16,8 @@
     "test": "mocha -r tsx \"test/**/*.test.ts\" --exit --timeout 30000",
     "clean": "rimraf dist",
     "smoke": "node tools/smoke.mjs",
+    "sweep": "tsx tools/sweep.ts",
+    "replay": "tsx tools/replay.ts",
     "smoke:lock": "node tools/lock-check.mjs"
   },
   "license": "UNLICENSED",

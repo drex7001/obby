@@ -395,3 +395,80 @@ sections are rather than how good the generator is.
 
 Budget accordingly: build three new sections, play them, and only then build the
 other five. A pool of nine good sections beats fourteen mediocre ones.
+
+---
+
+## As built
+
+Fourteen sections under [`src/shared/sections/`](../../src/shared/sections/),
+one file per taught verb rather than one per section, so the three sections that
+teach Carve sit next to each other and share the 0.95 u constant that *is* the
+verb. Gates in [`test/stages/sections.test.ts`](../../test/stages/sections.test.ts),
+which runs every contract item against every section over twenty-four variant
+draws.
+
+### Deviations from the catalogue
+
+- **Turnstile is difficulty 2 and can be the rest beat.** The spec's own text
+  calls it "a good rest beat despite the difficulty tag". Without it, a course
+  that opens on the Straightaway has no rest section left to pick.
+- **Sieve is difficulty 2.** As built it has no void and no hazard — every
+  piston is a solid — so nothing in it can end a run.
+- **`roles` is a set.** The pool table already lists the Straightaway under two.
+- **The Works' plate is always an eight-second hold.** The spec's "held by
+  somebody in a field of three or more, touch-and-hold below that" cannot be
+  generated: generation must never branch on how many runners are connected, or
+  two clients build different courses from one seed. The eight-second hold is
+  the fallback the spec names; the crowd behaviour is a room-side rule and
+  belongs with the rest of stage 10's scoring.
+- **The Works' bridge is always armed**, because the single-line rule leaves no
+  second route: an 11 u gap is not jumpable even at chain-8 speed.
+- **The Carousel runs two or three rotators, not two to four.** A 9 u rotator
+  needs 9.6 u of pitch and a fourth would land on the exit pad.
+- **The Gauntlet's bars sit at z 16 → 34, not 12 → 36.** An opener has nothing
+  in front of it to see past, so its telegraph has to fit inside the section;
+  and a 20 u arm pivoting at z 38 sweeps over the checkpoint bank, which has to
+  stay hazard-free.
+- **Pendulum Pass emits at most four anchors** even in a five-head round, since
+  four is the budget. The extra head is the one you time on foot.
+
+### The bank is hazard-free, and that is enforced
+
+"Hazard-free for 6 u in every direction" is not something a section can be
+trusted to remember, so it is a gate: no obstacle may reach within 1.5 u of
+either gate, measured over its **whole cycle** - the half-diagonal for anything
+that rotates, the full travel for anything that slides. Three sections failed it
+when it was first written:
+
+- **The Spiral** straddled both gates, and 42% of its platforms are spinning
+  rotators. A runner standing on the bank was picked up by one and swung around
+  its axis. Its first and last platforms are now always static floors, which is
+  what keeps the helix continuous with the banks without moving anybody.
+- **The Drift** ended on its fifth crumble, so the platform a runner was
+  standing on collapsed as they reached the checkpoint. It now has a 3 u lip to
+  land on.
+- **The Gallery**'s last bar swept 1.48 u past its exit gate.
+
+### The telegraph rule, made testable
+
+"First hazard ≥ 16 u past the entry" is enforced across the join rather than
+inside one section: every section keeps its first 6 u and its last 6 u
+hazard-free, and the generator's 4 u bank sits between them, so any join clears
+16 u. A section that can *open* has nothing in front of it and must find all 16
+inside itself.
+
+### The two gates that are not green yet
+
+"Completable using only its declared `requires`" and "bot completion ≥ 95%" both
+need the scripted runner that arrives with stage 10. Asserting them with
+anything weaker would be a green light that means nothing, so they are tracked
+there rather than faked here.
+
+### The known pool gap
+
+The Spiral appears in roughly three quarters of courses: it is the only section
+that climbs, so the elevation rule pairs it with the Cascade, and the pool has
+few enough difficulty-2 middles that the pacing rule reaches for it. The fix is
+another soft middle — authoring work, not generator work, and exactly the kind
+of thing this spec's own "build three, play them, then build the other five"
+budget note anticipates.

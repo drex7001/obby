@@ -23,20 +23,27 @@ import { Predict } from "@colyseus/sdk/predict";
 import type { default as server } from "../app.config.js";
 import type { Player, RaceInput, RacePhase } from "../rooms/schema/RaceState.js";
 
-import { MIN_PLAYERS, REMOTE_INTERP_MS, TICK_RATE } from "../shared/constants.js";
-import { buildLevel, type Level } from "../shared/level.js";
+import {
+  AMMO_MAX, COLLECT_TOKENS, MIN_PLAYERS, RECALL_TICKS, REMOTE_INTERP_MS,
+  SHOT_EYE, TETHER_HAND, TICK_RATE,
+} from "../shared/constants.js";
+import { buildLevelWith, type Level } from "../shared/level.js";
 import { clamp } from "../shared/math.js";
+import type { EnemyView } from "../shared/enemies.js";
 import type { OtherBody, SimWorld, StepCtx } from "../shared/movement.js";
 import { stepPlayer } from "../shared/movement.js";
 import type { WorldPhase } from "../shared/obstacles.js";
+import { findAnchor, selectAnchor } from "../shared/tether.js";
+import { clearRecallRing, makeRecallRing, recallSampleAt } from "../shared/recall.js";
 
 import { Input } from "./input.js";
 import { FollowCamera } from "./camera.js";
-import { UI, type BoardRow } from "./ui.js";
+import { UI, type BoardRow, type Rival } from "./ui.js";
 import { Stage } from "./render/scene.js";
 import { Course } from "./render/course.js";
 import { Avatars, type AvatarView } from "./render/avatars.js";
 import { Fx } from "./render/fx.js";
+import { Threats } from "./render/threats.js";
 
 const STEP_MS = 1000 / TICK_RATE;
 
@@ -52,6 +59,10 @@ const SIM_FIELDS = [
   "chain", "impactBuf", "heavyHeld", "heavyArmed", "heavySince", "plantUntil", "chainDecayUntil",
   "carving", "carveUntil", "carveCool", "hopWindow",
   "knockTick", "knockX", "knockY", "knockZ",
+  "ammo", "fireCool", "actionHeld", "useHeld", "pickupIn",
+  "burnTick", "burnAmount", "shieldUntil",
+  "anchorId", "ropeLen", "tension", "tetherCool", "tetherUntil",
+  "recallCharges", "recallUntil", "recallHeld",
 ] as const;
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement;
@@ -97,8 +108,21 @@ async function connect(name: string) {
   const self = room.state.players.get(room.sessionId) as Player | undefined;
   if (!self) { throw new Error("joined but no player was created"); }
 
-  let level: Level = buildLevel(room.state.seed);
+  /**
+   * The course, rebuilt exactly the way the room built it.
+   *
+   * The seed alone is no longer enough: a round's mutators are published, and
+   * building without them produces a different course - a different section
+   * count, a mirrored layout, different gravity. Reading both is what keeps
+   * "the level is never transmitted" true while the deck exists.
+   */
+  const courseOptions = () => ({
+    mutators: room.state.mutators ? room.state.mutators.split(",") : [],
+    tokens: room.state.mode === "collect" ? COLLECT_TOKENS : 0,
+  });
+  let level: Level = buildLevelWith(room.state.seed, courseOptions());
   const course = new Course(stage, level);
+  const threats = new Threats(stage);
 
   // ------------------------------------------------------- the client's world
   const phase: WorldPhase = {
@@ -106,15 +130,27 @@ async function connect(name: string) {
     crumbleTicks: [],
     plateTicks: [],
     plateSince: [],
+    breakerTicks: [],
+    pickupTicks: [],
+    shellTicks: [],
   };
   const others: OtherBody[] = [];
   const otherPool: OtherBody[] = [];
+  // Our own Recall ring. The reconciler keeps an identical buffer for rollback;
+  // this one is the same shape written from the same step, and neither is sent.
+  const history = makeRecallRing();
+  // Enemies are mirrored out of the schema once a frame, for the same reason
+  // the room mirrors them in: the shared step reads them on every sub-step and
+  // a change-tracking proxy is the wrong shape for that.
+  const enemies: EnemyView[] = [];
 
   const world: SimWorld = {
     level,
     phase,
     tickBase: 0,
     others,
+    enemies,
+    history,
     fx: (kind, x, y, z) => {
       const d = Math.hypot(
         stage.camera.position.x - x,
@@ -135,6 +171,7 @@ async function connect(name: string) {
     smoothMs: 60,
   });
 
+  stage.setFog(level.mutators.includes("fog"));
   camera.reset(self.x, self.y, self.z);
   ui.enterGame();
   void keys.lock();
@@ -149,9 +186,21 @@ async function connect(name: string) {
 
   // Start a solo practice run once the lobby has let us.
   addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") { return; }
-    if (room.state.phase !== "waiting") { return; }
-    room.send("solo", {});
+    if (e.key === "Enter" && room.state.phase === "waiting") {
+      room.send("solo", {});
+      return;
+    }
+    // The two deliberate purchases. Burn is on the input packet instead,
+    // because it is a movement decision made at speed and has to land on an
+    // exact tick; these two do not.
+    if (e.key === "1") { room.send("buy", { item: "shield" }); }
+    if (e.key === "2") { room.send("buy", { item: "key" }); }
+    if (e.key === "3") { room.send("buy", { item: "recall" }); }
+    // A finished runner's one charge, spent on the section it is aimed at.
+    if (e.key === "x" && (self.finished || self.dnf)) {
+      const target = nearestBreaker(level, me.value("x") as number, me.value("z") as number);
+      if (target >= 0) { room.send("influence", { slot: target }); }
+    }
   });
 
   room.onLeave(() => {
@@ -160,16 +209,27 @@ async function connect(name: string) {
 
   room.onMessage("raceOver", () => { /* results are driven from state.phase */ });
 
+  // Attribution is the social payload: the fun is that runners know who did it.
+  room.onMessage("influence", (msg: any) => {
+    ui.callout(`inf-${msg.slot}`, "Incoming", `${msg.by} is changing the course`, "warm", 2400);
+  });
+
   // ------------------------------------------------------------- render loop
   // Deliberately unset: the first frame seeds it, so no wall-clock gap between
   // wiring up and the first animation frame is ever accumulated.
   let lastNow = -1;
   let renderAcc = 0;
   let lastSeed = room.state.seed;
+  let lastDeck = room.state.mutators;
   let lastRound = room.state.round;
   let lastCheckpoint = self.checkpoint;
   let wasFinished = false;
   let lastPhase = room.state.phase as RacePhase;
+  // Hysteresis on the rival markers. Two runners a hair apart would otherwise
+  // swap places every frame, which is unreadable and slightly maddening.
+  let rivalAhead: string | null = null;
+  let rivalBehind: string | null = null;
+  const RIVAL_STICK = 0.004;
 
   /** Mirror the handful of synchronised integers the obstacles depend on. */
   function syncPhase() {
@@ -177,6 +237,21 @@ async function connect(name: string) {
     copyInto(phase.crumbleTicks as number[], room.state.crumbleTicks);
     copyInto(phase.plateTicks as number[], room.state.plateTicks);
     copyInto(phase.plateSince as number[], room.state.plateSince);
+    copyInto(phase.breakerTicks as number[], room.state.breakerTicks);
+    copyInto(phase.pickupTicks as number[], room.state.pickupTicks);
+    copyInto(phase.shellTicks as number[], room.state.shellTicks);
+  }
+
+  function buildEnemies() {
+    enemies.length = 0;
+    for (const [, e] of room.state.enemies) {
+      enemies.push({
+        id: e.id, kind: e.kind, alive: e.alive, action: e.action,
+        fromTick: e.fromTick, toTick: e.toTick,
+        x0: e.x0, y0: e.y0, z0: e.z0,
+        dx: e.dx, dz: e.dz, speed: e.speed, turn: e.turn,
+      });
+    }
   }
 
   function buildOthers() {
@@ -199,22 +274,26 @@ async function connect(name: string) {
     lastNow = now;
     const dt = dtMs / 1000;
 
-    // A new round means a new seed and a whole new course.
-    if (room.state.seed !== lastSeed) {
+    // A new round means a new seed, a new deck, and a whole new course.
+    if (room.state.seed !== lastSeed || room.state.mutators !== lastDeck) {
       lastSeed = room.state.seed;
-      level = buildLevel(lastSeed);
+      lastDeck = room.state.mutators;
+      level = buildLevelWith(lastSeed, courseOptions());
       world.level = level;
       course.rebuild(level);
+      stage.setFog(level.mutators.includes("fog"));
       camera.reset(self.x, self.y, self.z);
     }
     if (room.state.round !== lastRound) {
       lastRound = room.state.round;
       lastCheckpoint = -1;
       wasFinished = false;
+      clearRecallRing(history);
     }
 
     syncPhase();
     buildOthers();
+    buildEnemies();
     world.tickBase = self.active
       ? self.tickBase
       : room.state.tick - input.sentCount;
@@ -244,6 +323,28 @@ async function connect(name: string) {
 
     course.update(renderTick, phase);
     course.setReached(self.checkpoint);
+    threats.update(enemies, renderTick);
+
+    // The tether, drawn from the predicted body rather than the server's: the
+    // rope has to be attached to where the player believes they are, or it
+    // lags a frame behind the runner it is holding up.
+    const px = me.value("x"), py = me.value("y"), pz = me.value("z");
+    const held = me.value("anchorId") !== 0
+      ? findAnchor(level, (me.value("anchorId") as number) - 1) ?? null
+      : null;
+    course.setTether(held, px, py + TETHER_HAND, pz);
+    const target = held ?? selectAnchor(
+      level, phase, renderTick, px, py + SHOT_EYE, pz, keys.yaw, keys.pitch,
+    );
+    course.setAim(target ? target.id : -1);
+
+    // The ghost appears the moment the context action goes down, which is what
+    // makes the four-tick arm a decision rather than a delay.
+    const arming = (me.value("recallHeld") as number) > 0 && self.recallCharges > 0;
+    const destination = arming
+      ? recallSampleAt(history, Math.floor(world.tickBase + input.sentCount) - RECALL_TICKS)
+      : null;
+    course.setGhost(destination ? destination.x : null, destination?.y, destination?.z);
 
     // --------------------------------------------------------------- avatars
     const views: AvatarView[] = [];
@@ -298,14 +399,53 @@ async function connect(name: string) {
         dnf: player.dnf,
         finishMs: player.finishMs,
         self: sessionId === room.sessionId,
+        bot: player.bot,
+        seriesPoints: player.seriesPoints,
       });
     }
+
+    // ---------------------------------------------------------------- rivals
+    //
+    // The gap is progress converted to seconds at the pace the leader is
+    // actually running, which reads far better than a raw percentage: "two
+    // seconds back" is something a runner can act on.
+    const pace = Math.max(6, Math.hypot(self.vx, self.vz));
+    const asSeconds = (delta: number) => Math.abs(delta) * level.courseLength / pace;
+    let ahead: Rival | null = null;
+    let behind: Rival | null = null;
+    let aheadGap = Infinity;
+    let behindGap = Infinity;
+    for (const [sessionId, player] of state.players) {
+      if (sessionId === room.sessionId || !player.connected || player.dnf) { continue; }
+      const delta = player.progress - self.progress;
+      // Whoever currently holds the slot keeps it until somebody is clearly
+      // closer, which is the hysteresis.
+      const stick = (held: string | null) => (sessionId === held ? RIVAL_STICK : 0);
+      if (delta > 0 && delta - stick(rivalAhead) < aheadGap) {
+        aheadGap = delta - stick(rivalAhead);
+        ahead = { name: player.name, colour: player.colour, seconds: asSeconds(delta) };
+        rivalAhead = sessionId;
+      } else if (delta <= 0 && -delta - stick(rivalBehind) < behindGap) {
+        behindGap = -delta - stick(rivalBehind);
+        behind = { name: player.name, colour: player.colour, seconds: asSeconds(delta) };
+        rivalBehind = sessionId;
+      }
+    }
+    ui.setRivals(currentPhase === "racing" ? ahead : null, currentPhase === "racing" ? behind : null);
+    ui.setSeries(
+      state.seriesRound, state.seriesLength, self.seriesPoints,
+      state.seriesWinner ? (state.players.get(state.seriesWinner)?.name ?? "") : "",
+    );
     rows.sort((a, b) => (a.rank || 99) - (b.rank || 99));
     ui.setBoard(rows);
     ui.setPosition(self.rank, rows.length);
     ui.setSection(sectionLabel(level, self.checkpoint));
+    ui.setKit(
+      self.ammo, AMMO_MAX, self.coins, self.recallCharges,
+      self.shieldUntil >= 0 && state.tick < self.shieldUntil,
+    );
     ui.setNotes(level.notes);
-    ui.setRound(state.round, phaseLabel(currentPhase));
+    ui.setRound(state.round, phaseLabel(currentPhase), state.mode);
 
     // ------------------------------------------------------------------ clock
     if (currentPhase === "racing" && state.raceStartTick >= 0) {
@@ -348,12 +488,22 @@ async function connect(name: string) {
       case "racing": {
         if (self.checkpoint !== lastCheckpoint) {
           if (self.checkpoint > lastCheckpoint && self.checkpoint >= 0) {
+            // The split against the best time to this checkpoint - or against
+            // the round before, if the best time is your own.
+            const mine = self.splits[self.checkpoint] ?? 0;
+            const best = state.bestSplits[self.checkpoint] ?? 0;
+            const reference = best > 0 && best < mine
+              ? best
+              : (state.prevBestSplits[self.checkpoint] ?? 0);
+            const delta = reference > 0 && mine > 0 ? (mine - reference) / 1000 : null;
             ui.callout(
               `cp-${self.checkpoint}`,
-              "Checkpoint",
+              delta === null
+                ? "Checkpoint"
+                : `${delta >= 0 ? "+" : "\u2212"}${Math.abs(delta).toFixed(1)}s`,
               level.checkpoints[self.checkpoint].label,
-              "small good",
-              1300,
+              delta !== null && delta < 0 ? "small good" : "small",
+              2000,
             );
           }
           lastCheckpoint = self.checkpoint;
@@ -407,6 +557,15 @@ async function connect(name: string) {
       x: self.x, y: self.y, z: self.z,
       grounded: self.grounded,
       chain: self.chain,
+      ammo: self.ammo,
+      coins: self.coins,
+      breaks: self.breaks,
+      shieldUntil: self.shieldUntil,
+      anchorId: self.anchorId,
+      ropeLen: self.ropeLen,
+      tension: self.tension,
+      recallCharges: self.recallCharges,
+      recallUntil: self.recallUntil,
       carving: self.carving,
       hopWindow: self.hopWindow,
       checkpoint: self.checkpoint,
@@ -419,6 +578,7 @@ async function connect(name: string) {
     tickBase: self.tickBase,
     sentCount: input.sentCount,
     lastProcessed: input.lastProcessed,
+    enemies: room.state.enemies.size,
     fps: stage.engine.getFps(),
     meshes: stage.scene.meshes.length,
   });
@@ -443,10 +603,24 @@ function countConnected(state: any): number {
   return n;
 }
 
+/** The unbroken breaker nearest a spectator's camera, for an influence spend. */
+function nearestBreaker(level: Level, x: number, z: number): number {
+  let best = -1;
+  let bestDistance = Infinity;
+  for (const b of level.breakers) {
+    const d = Math.hypot(b.x - x, b.z - z);
+    if (d < bestDistance) { bestDistance = d; best = b.slot; }
+  }
+  return best;
+}
+
 /** The section a player is currently running is the one ending at their next checkpoint. */
 function sectionLabel(level: Level, checkpoint: number): string {
   const next = checkpoint + 1;
-  return next < level.checkpoints.length ? level.checkpoints[next].label : "The Climb";
+  if (next < level.checkpoints.length) { return level.checkpoints[next].label; }
+  // Past the last bank there is no checkpoint left to name, so the run-in is
+  // whatever section the generator put last.
+  return level.sections[level.sections.length - 1]?.title ?? "The Climb";
 }
 
 function phaseLabel(phase: RacePhase): string {

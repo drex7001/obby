@@ -100,12 +100,12 @@ describe("carve", () => {
     const level = createFlatLevel();
     level.checkpoints.push({
       index: 0,
-      volume: { x: 0, y: 0.5, z: 0, hx: 4, hy: 1, hz: 4 },
+      volume: { x: 0, y: 0.5, z: 0, hx: 4, hy: 1, hz: 4, yaw: 0 },
       spawn: { x: 0, y: 0, z: 0 }, yaw: 0, label: "Carve checkpoint",
     });
     level.plates.push({
       id: 0,
-      volume: { x: 0, y: 0.5, z: 0, hx: 4, hy: 1, hz: 4 },
+      volume: { x: 0, y: 0.5, z: 0, hx: 4, hy: 1, hz: 4, yaw: 0 },
       activation: "hold", holdTicks: 30, label: "Carve plate",
     });
     const world = createWorld(level);

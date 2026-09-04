@@ -52,7 +52,7 @@ describe("momentum", () => {
 
   it("accelerates downhill along a ramp", () => {
     const level = createFlatLevel();
-    level.ramps.push({ x: 0, z: 0, hx: 8, hz: 6, y0: 0, y1: 4, style: "ramp" });
+    level.ramps.push({ x: 0, z: 0, hx: 8, hz: 6, y0: 0, y1: 4, yaw: 0, style: "ramp" });
     const state = createSimState({ y: 2, z: 0, grounded: true });
 
     stepSimulation(state, idleInput, createWorld(level), 1);
@@ -65,7 +65,7 @@ describe("momentum", () => {
     stepSimulation(flat, idleInput, createWorld(createFlatLevel()), 1);
 
     const rampLevel = createFlatLevel();
-    rampLevel.ramps.push({ x: 0, z: 0, hx: 8, hz: 6, y0: 0, y1: 4, style: "ramp" });
+    rampLevel.ramps.push({ x: 0, z: 0, hx: 8, hz: 6, y0: 0, y1: 4, yaw: 0, style: "ramp" });
     const uphill = createSimState({ y: 2, z: 0, grounded: true, vz: 5 });
     stepSimulation(uphill, idleInput, createWorld(rampLevel), 1);
 

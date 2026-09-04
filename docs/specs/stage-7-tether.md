@@ -197,3 +197,104 @@ feature that must succeed.
 
 Moving anchors, tethering other players, tethering arbitrary surfaces, rope
 collision against geometry. Each is a separate decision made after v1 is played.
+
+---
+
+## As built
+
+Targeting, the constraint and the release in
+[`tether.ts`](../../src/shared/tether.ts), the verb itself threaded through
+[`movement.ts`](../../src/shared/movement.ts), the rope and the in-range
+indicator in [`course.ts`](../../src/client/render/course.ts), and the gates in
+[`test/stages/tether.test.ts`](../../test/stages/tether.test.ts).
+
+v1 as specified: static anchors, hard positional constraint, tension in the
+accumulator rather than in the rope. Class A throughout - a whole attach, swing
+and release replays bit-identically, and anchor selection does not read the
+tick at all.
+
+### The arc bottom is solved, not searched for
+
+The spec asks for a window "±5 ticks of the arc bottom", and the obvious
+implementation - watch for the tick where vertical velocity changes sign - can
+only ever detect the bottom *after* it has passed, so the first half of the
+window is unreachable. As built the bottom is computed in closed form instead:
+near it a swing is a pendulum, so the angle from straight down divided by the
+angular speed **is** the time remaining. That makes "within five ticks" a pure
+function of the current state - the same answer on both ends, at any latency,
+on every replay - rather than a guess about the future.
+
+### Three deviations
+
+1. **`tension` is a full number, not a quantised `uint8`.** The accumulator is
+   integrated per sub-step; rounding it into a byte on each of those either
+   loses the entire gain (the per-sub-step increment is well under 1) or needs a
+   scale so coarse the release stops being readable. Three bytes is not worth a
+   field the two ends can round differently. `TETHER_TENSION_MAX` is therefore
+   24 rather than 255 - a physical bound rather than a storage one.
+2. **A fifth field, `tetherUntil`.** The 60-tick hard cap needs a stamp to
+   count from; the spec's four fields cannot express it.
+3. **The speed payout additionally requires tangential speed above the tension
+   floor.** Without that clause, hanging motionless directly below an anchor
+   puts the angle at exactly zero, which reads as a perfect release and pays a
+   Chain point for nothing - the precise "creates speed you did not bring"
+   failure the tension floor exists to prevent.
+
+### One bit, two verbs
+
+`action` has carried "tether / fire" since stage 0, and the input packet was
+settled there and is not to be touched. So the press is disambiguated by what
+is in front of the runner: an anchor inside the cone claims it, and a press
+with no anchor in front of it is a shot. That works because anchors are
+explicit level content placed on a swing line and breakers never sit on one -
+and because the alternative, a modal weapon switch, is a worse thing to ask of
+someone at 19 u/s.
+
+### Where it stands against the acceptance list
+
+Everything except two items is covered by the suite. "Every course completable
+with the tether disabled, 1000 seeds" needs the stage-10 bot sweep; its
+checkable half - that a mode without the verb never selects a section requiring
+it, and that the verb itself goes inert - is asserted over 300 seeds. And the
+smoke run cannot be relied on to reach an anchor in the time it plays, so the
+full attach-swing-release is driven headless in the suite instead, with the
+attached *rendering* path covered by a NullEngine test in `course.test.ts`.
+
+### Two bugs the verb shipped with, found by playing it
+
+Both were found by someone standing at the lip of the Chasm asking why the
+grapple did not work, and both were real.
+
+**1. The camera could not look up at an anchor.** `PITCH_MIN` was -0.42 - a
+twenty-four degree look-up, barely above the horizon. Every anchor in the Chasm
+sits between thirty-eight and forty degrees above a runner standing at the lip,
+so the aim ray *could not be pointed at one*. Measured across ten Chasm courses:
+**zero aimable anchors out of thirty**. Attaching worked at all only because the
+twenty-degree assist cone stretched six degrees past the limit, which is a
+coincidence rather than a mechanic - and it is why the verb read as broken.
+`PITCH_MIN` is now -0.95, an ordinary third-person look-up range. Two to four
+anchors per course are now genuinely aimable.
+
+**2. The Chasm was not crossable.** A rope catch destroys the outward radial
+velocity - correct for something inextensible - so a swing never returns to the
+height it left from. An exhaustive search over run-up distance, which anchor to
+take, and release timing put the best possible crossing at about 27 u, arriving
+a metre below the far lip and hitting its face rather than landing on it.
+Against a gap drawn at 26-34, that made **three chasms in ten completable and
+seven impossible**, by anybody, however well they played.
+
+The gap is now 16-21 and the anchors hang at 6.5-8 rather than 9-11. Lower
+anchors help twice: they are inside the camera's range, and a shorter rope puts
+the arc bottom nearer the deck, so there is less depth to climb back out of. All
+ten of the same courses are now crossable with margin. A running jump at chain 8
+clears about twelve units, so the section still cannot be run on foot - which is
+the whole reason it is the one place in the pool that hard-requires a verb.
+
+### What the numbers came out at
+
+A 12.9 u rope under this gravity swings with a quarter period near a second, so
+a swing is a beat inside a section rather than a way to cross one. The rope is
+slack until it catches - a runner who throws it from twelve units back falls for
+half a second first - and the catch costs one sub-step of overshoot (about
+0.1 u at 27 u/s) before the constraint has it, after which the rope holds to
+within a centimetre with no ringing at all.

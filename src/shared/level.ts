@@ -5,12 +5,40 @@
  * state and every client rebuilds a bit-identical course from it - geometry,
  * obstacle phases and the per-round variant alike. Nothing about the level is
  * ever sent over the wire beyond that seed.
+ *
+ * This module is deliberately *only* the shapes and the shared timings. The
+ * machinery that assembles a course lives in [generator.ts](./generator.ts) and
+ * the content it assembles lives under [sections/](./sections/), so a section
+ * can compile against these types without closing an import cycle.
  */
 
-import { mulberry32 } from "./math.js";
-import { TICK_RATE } from "./constants.js";
+export { buildLevel, buildLevelWith, DEFAULT_VERBS } from "./generator.js";
+export type { LevelOptions } from "./generator.js";
 
 export interface Vec3 { x: number; y: number; z: number }
+
+/**
+ * Tuning a mutator is allowed to vary, carried **on the level**.
+ *
+ * This is the one technical trap stage 11 has, and it is why the migration is
+ * its first task rather than its last: a mutator that changes a value the
+ * client reads out of `constants.ts` desynchronises immediately, because the
+ * client's copy is compiled in. Anything a mutator touches has to live
+ * somewhere both ends read from the same place, and the level - rebuilt from a
+ * seed on both ends, never transmitted - is exactly that place.
+ *
+ * Everything here defaults to the constant it shadows, so a course with no
+ * mutators behaves identically to one built before this existed.
+ */
+export interface Tuning {
+  gravity: number;
+  groundFriction: number;
+  /** Ticks of quiet before the Chain starts shedding. */
+  chainDecayTicks: number;
+  /** Chain levels one conversion is worth. */
+  chainGain: number;
+  pushStrength: number;
+}
 
 /** A yaw-rotated solid box. Half-extents, because that is what collision wants. */
 export interface SolidBox {
@@ -20,11 +48,18 @@ export interface SolidBox {
   style: string;
 }
 
-/** A one-way sloped floor: a walkable surface rising linearly along +Z. */
+/**
+ * A one-way sloped floor: a walkable surface rising linearly along its own +Z.
+ *
+ * `yaw` orients that local +Z in the world. It exists because the generator
+ * places sections at a heading rather than at a Z coordinate; a ramp with
+ * `yaw: 0` behaves exactly as it did before the field was added.
+ */
 export interface Ramp {
   x: number; z: number;
   hx: number; hz: number;
   y0: number; y1: number;
+  yaw: number;
   style: string;
 }
 
@@ -36,6 +71,12 @@ export type ObstacleKind =
   | "crumble"    // solid that collapses shortly after being stood on
   | "door"       // solid that drops into the floor on a timed cycle
   | "hinge"      // solid that swings about an offset pivot, driven by a plate
+  | "collapse"   // gantry that drops into a bridge when its breaker is shot
+  | "seal"       // barrier that opens for the round when its seal is shot
+  | "turret"     // hazard shell on a ballistic arc, fired on a fixed cycle
+  | "sentry"     // hazard beam swept about a pivot; stuns, never launches
+  | "swarm"      // hazard field armed by a plate - a trap, not a patrol
+  | "nest"       // static solid that emits enemies on a fixed cycle
   | "startgate"; // solid until the race begins
 
 export interface Obstacle {
@@ -60,14 +101,50 @@ export interface Obstacle {
   openFraction?: number;   // door: fraction of the cycle spent open
   knock?: number;          // hazard: launch speed imparted on contact
   plate?: number;          // index into Level.plates driving this obstacle
+  /** Static yaw baked in by the generator, added to whatever the pose computes. */
+  baseYaw?: number;
   /** Index into the room's crumble-state array. Set for `crumble` only. */
   slot?: number;
+  /**
+   * Index into the room's breaker-state array (stage 6).
+   *
+   * A hazard carrying this goes inert for five seconds when that breaker is
+   * shot; a `collapse` or `seal` solid carrying it is what the breaker builds
+   * or opens. Never a requirement - see stage 6, Risk 1.
+   */
+  breaker?: number;
+  /** `collapse`: how far the slab drops as it swings into place. */
+  dropY?: number;
+
+  // ---- watchers (stage 9) --------------------------------------------------
+  /**
+   * Index into the room's shell-state array, for a turret whose shells can be
+   * shot down. Separate from `breaker` because a turret is not destroyed by the
+   * shot - only the shell in flight is, and the next cycle fires as normal.
+   */
+  shell?: number;
+  /** `turret`: muzzle speed and launch pitch, in u/s and radians. */
+  muzzleSpeed?: number;
+  muzzlePitch?: number;
+  /** A searching yaw sweep laid over a slider's travel. Purely readability. */
+  scan?: number;
+  scanPeriod?: number;
+  /** Stun without knockback. A sentry slows a runner rather than launching one. */
+  stunOnly?: boolean;
 }
 
-/** An axis-aligned trigger volume. */
+/**
+ * A trigger volume, rotated about +Y like everything else the generator places.
+ *
+ * The turning cursor is why this carries a yaw at all: a checkpoint bank on a
+ * bending section is a rotated rectangle, and an axis-aligned box around it
+ * either misses runners on the outside of the turn or fires early for runners
+ * who have not reached it.
+ */
 export interface Volume {
   x: number; y: number; z: number;
   hx: number; hy: number; hz: number;
+  yaw: number;
 }
 
 export interface Checkpoint {
@@ -89,6 +166,89 @@ export interface Plate {
   label: string;
 }
 
+/**
+ * A tether attachment point (stage 7). Placed as level content now so the
+ * sections built around the verb are authored once, not twice.
+ */
+export interface Anchor {
+  id: number;
+  x: number; y: number; z: number;
+}
+
+/**
+ * A shootable target.
+ *
+ * Deliberately a separate prop class from the hazards themselves. Nothing here
+ * deletes an obstacle: `disable` is a five-second window, `collapse` and `seal`
+ * add a route, and `pod` and `crate` are loot. That is what keeps dodging the
+ * central skill rather than an option - see stage 6, Risk 1.
+ */
+export interface Breaker {
+  id: number;
+  /** Index into the room's breaker-state array. */
+  slot: number;
+  x: number; y: number; z: number;
+  hx: number; hy: number; hz: number;
+  yaw: number;
+  /** What breaking it does. Always a convenience, never a requirement. */
+  effect: BreakerEffect;
+  style: string;
+}
+
+export type BreakerEffect =
+  | "disable"   // the hazards tagged with this slot go inert for five seconds
+  | "collapse"  // a gantry drops into a bridge
+  | "seal"      // a barrier opens, permanently for the round
+  | "pod"       // three coins, shared with anyone who hits it within five ticks
+  | "crate";    // two shots
+
+/**
+ * A floating pickup (stage 6). One gun, contested: two runners converging on
+ * it is a race-within-the-race on a spot the section author chose.
+ */
+export interface Pickup {
+  id: number;
+  /** Index into the room's pickup-state array. */
+  slot: number;
+  x: number; y: number; z: number;
+  kind: "gun" | "crate";
+  /** Shots granted, capped at `AMMO_MAX`. */
+  ammo: number;
+}
+
+/**
+ * An enemy a section places directly (stage 9).
+ *
+ * Nests emit Shamblers on a schedule; a Lurcher waiting in a doorway or a
+ * Bulwark parked across a lane is a *placement*, not a spawn rate, and belongs
+ * with the geometry it was authored against.
+ */
+export interface EnemySpawn {
+  id: number;
+  /** Index into `ENEMY_SHAPES`: 0 Shambler, 1 Lurcher, 2 Bulwark. */
+  kind: number;
+  x: number; y: number; z: number;
+}
+
+/** Where a section ended up on the assembled course. Diagnostics and tests. */
+export interface SectionPlacement {
+  id: string;
+  title: string;
+  role: string;
+  difficulty: number;
+  teaches: string | null;
+  /** Arc length along the course centre-line at this section's entry gate. */
+  at: number;
+  length: number;
+  /** Cursor frame at the entry gate. */
+  x: number; y: number; z: number; yaw: number;
+  /** Heading change through the section, in radians. */
+  turn: number;
+  /** Width of the ground the section actually builds at each gate. */
+  entryTrack: number;
+  exitTrack: number;
+}
+
 export interface Level {
   seed: number;
   solids: SolidBox[];
@@ -96,6 +256,13 @@ export interface Level {
   obstacles: Obstacle[];
   checkpoints: Checkpoint[];
   plates: Plate[];
+  /** Render-only dressing: landmarks, posts, rails. Never collided against. */
+  decor: SolidBox[];
+  anchors: Anchor[];
+  breakers: Breaker[];
+  pickups: Pickup[];
+  /** Enemies placed by section authors. Nests add more as the race runs. */
+  spawns: EnemySpawn[];
   finish: Volume;
   /** Walkable surface height under the finish line, for the renderer's gate strip. */
   finishGroundY: number;
@@ -108,306 +275,36 @@ export interface Level {
   pathCum: number[];
   /** Number of `crumble` obstacles - the size of the room's crumble-state array. */
   crumbleCount: number;
+  /** Number of breaker slots - the size of the room's breaker-state array. */
+  breakerCount: number;
+  /** Number of pickup slots - the size of the room's pickup-state array. */
+  pickupCount: number;
+  /** Number of shootable-shell slots - the size of the room's shell array. */
+  shellCount: number;
+  /** The sections this course was assembled from, in order. */
+  sections: SectionPlacement[];
+  /** Centre-line length from the start gate to the finish, excluding the lobby. */
+  courseLength: number;
+  /** Movement verbs the generator was allowed to require. Part of the seed. */
+  verbs: string[];
+  /** Tuning both ends must agree on. Mutators vary these; nothing else may. */
+  tuning: Tuning;
+  /** Mutator ids in play this round, in a stable order. */
+  mutators: string[];
   /** Human-readable summary of what this round's variant changed. */
   notes: string[];
 }
 
 // ---------------------------------------------------------------------------
 // Timing shared with the room: how a crumble platform behaves once triggered.
+// These moved to constants.ts so the section builders can read them; they are
+// re-exported here because this is where callers have always found them.
 // ---------------------------------------------------------------------------
 
-/** Ticks between "someone stood on it" and "it drops". */
-export const CRUMBLE_DELAY_TICKS = 17;   // ~0.55s
-/** Ticks the gap stays open before the platform snaps back. */
-export const CRUMBLE_GONE_TICKS = 135;   // ~4.5s
-/** Seconds a pressure plate stays hot after the last player steps off it. */
-export const PLATE_HOLD_SECONDS = 8;
-
-export const START_GATE_STYLE = "gate";
-
-// ---------------------------------------------------------------------------
-
-export function buildLevel(seed: number): Level {
-  const rand = mulberry32(seed || 1);
-  const notes: string[] = [];
-
-  const solids: SolidBox[] = [];
-  const ramps: Ramp[] = [];
-  const obstacles: Obstacle[] = [];
-  const checkpoints: Checkpoint[] = [];
-  const plates: Plate[] = [];
-  let nextId = 1;
-  let crumbleCount = 0;
-
-  /** A floor slab whose walkable surface sits at `topY`. */
-  const floor = (x: number, z: number, sx: number, sz: number, topY = 0, style = "track", yaw = 0) => {
-    solids.push({ x, y: topY - 0.5, z, hx: sx / 2, hy: 0.5, hz: sz / 2, yaw, style });
-  };
-  /** A wall standing on `baseY`. */
-  const wall = (x: number, z: number, sx: number, sy: number, sz: number, baseY = 0, style = "wall", yaw = 0) => {
-    solids.push({ x, y: baseY + sy / 2, z, hx: sx / 2, hy: sy / 2, hz: sz / 2, yaw, style });
-  };
-  const vol = (x: number, y: number, z: number, sx: number, sy: number, sz: number): Volume =>
-    ({ x, y, z, hx: sx / 2, hy: sy / 2, hz: sz / 2 });
-
-  // ======================================================== 0. LOBBY / STAGING
-  floor(0, -12, 26, 24, 0, "lobby");
-  wall(-13.5, -12, 1, 3, 24, 0, "wall");
-  wall(13.5, -12, 1, 3, 24, 0, "wall");
-  wall(0, -24.5, 28, 3, 1, 0, "wall");
-
-  obstacles.push({
-    id: nextId++, kind: "startgate", role: "solid", style: START_GATE_STYLE,
-    size: { x: 26, y: 4, z: 0.7 }, px: 0, py: 2, pz: 0,
-  });
-
-  // ==================================================== 1. THE GAUNTLET (bars)
-  floor(0, 23, 22, 46, 0, "track");
-
-  // Sweep directions are re-rolled every round: sometimes the three bars chase
-  // each other, sometimes they scissor.
-  const barDirs = [rand() < 0.5 ? 1 : -1, rand() < 0.5 ? 1 : -1, rand() < 0.5 ? 1 : -1];
-  // Tuned down from where this started. A 10-unit arm at 2.2 rad/s sweeps its
-  // tip at 22 u/s - more than twice a runner's top speed, which reads as
-  // unfair rather than hard. These give a rhythm you can actually watch and
-  // time, ramping up across the three.
-  const barSpeeds = [0.9, 1.25, 1.6];
-  [12, 24, 36].forEach((z, i) => {
-    obstacles.push({
-      id: nextId++, kind: "spinner", role: "hazard", style: "bar",
-      // Raised and thin enough that a 0.86u carving capsule can pass below,
-      // while a standing capsule's middle still catches it. This is the first
-      // course element that explicitly teaches Carve.
-      size: { x: 20, y: 0.12, z: 1.2 },
-      px: 0, py: 1.35, pz: z,
-      speed: barSpeeds[i] * barDirs[i],
-      phase: i * 0.31,
-      // Enough to spoil a run, not enough to reliably clear a 22-wide track -
-      // this is the section before anyone has banked a checkpoint.
-      knock: 10,
-    });
-  });
-  notes.push(barDirs[0] === barDirs[1] && barDirs[1] === barDirs[2]
-    ? "Push bars sweeping in unison"
-    : "Push bars sweeping against each other");
-
-  floor(0, 50, 16, 10, 0, "pad");
-  checkpoints.push({
-    index: 0, volume: vol(0, 1.6, 50, 16, 4, 8),
-    spawn: { x: 0, y: 0.05, z: 48 }, yaw: 0, label: "The Gauntlet",
-  });
-
-  // ============================================= 2. THE DRIFT (movers/crumble)
-  const moverPeriod = 4.2;
-  obstacles.push({
-    id: nextId++, kind: "slider", role: "solid", style: "mover",
-    size: { x: 7, y: 1, z: 7 },
-    px: 0, py: -0.5, pz: 60,
-    a: { x: -8, y: -0.5, z: 60 }, b: { x: 8, y: -0.5, z: 60 },
-    period: moverPeriod, phase: 0,
-  });
-  obstacles.push({
-    id: nextId++, kind: "slider", role: "solid", style: "mover",
-    size: { x: 7, y: 1, z: 7 },
-    px: 0, py: -0.5, pz: 68,
-    a: { x: 8, y: -0.5, z: 68 }, b: { x: -8, y: -0.5, z: 68 },
-    period: moverPeriod, phase: 0.5,
-  });
-
-  // Five stepping stones that give way. Their lateral pattern is re-rolled each
-  // round, so the safe rhythm through the section is never quite the same.
-  const crumbleLanes = [-2.4, 2.4, 0, -2.4, 2.4];
-  for (let i = crumbleLanes.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    const swap = crumbleLanes[i];
-    crumbleLanes[i] = crumbleLanes[j];
-    crumbleLanes[j] = swap;
-  }
-  crumbleLanes.forEach((x, i) => {
-    obstacles.push({
-      id: nextId++, kind: "crumble", role: "solid", style: "crumble",
-      size: { x: 3.8, y: 1, z: 3.8 },
-      px: x, py: -0.5, pz: 76 + i * 4.2,
-      slot: crumbleCount++,
-    });
-  });
-
-  floor(0, 100, 16, 10, 0, "pad");
-  checkpoints.push({
-    index: 1, volume: vol(0, 1.6, 100, 16, 4, 8),
-    spawn: { x: 0, y: 0.05, z: 99 }, yaw: 0, label: "The Drift",
-  });
-
-  // ================================================= 3. PENDULUM PASS (bridge)
-  floor(0, 128, 3.6, 46, 0, "bridge");
-
-  // Phase spread decides whether the heads swing as a travelling wave or as a
-  // single wall you have to thread in one go.
-  const inSync = rand() < 0.35;
-  const hammerSpread = inSync ? 0 : 0.27;
-  const hammerPeriod = 2.4 + rand() * 0.7;
-  [112, 122, 132, 142].forEach((z, i) => {
-    obstacles.push({
-      id: nextId++, kind: "pendulum", role: "hazard", style: "hammer",
-      size: { x: 2.7, y: 2.7, z: 2.2 },
-      px: 0, py: 9, pz: z,
-      armLength: 7, amplitude: 1.08,
-      period: hammerPeriod, phase: i * hammerSpread,
-      knock: 13,
-    });
-  });
-  notes.push(inSync ? "Pendulums swinging as one wall" : "Pendulums staggered into a wave");
-
-  floor(0, 156, 16, 10, 0, "pad");
-  checkpoints.push({
-    index: 2, volume: vol(0, 1.6, 156, 16, 4, 8),
-    spawn: { x: 0, y: 0.05, z: 155 }, yaw: 0, label: "Pendulum Pass",
-  });
-
-  // ============================================ 4. THE CAROUSEL (spin + walls)
-  const rotSpeeds = [0.55, 0.72, 0.86];
-  [168, 179, 190].forEach((z, i) => {
-    obstacles.push({
-      id: nextId++, kind: "rotator", role: "solid", style: "rotator",
-      size: { x: 9, y: 1, z: 9 },
-      px: 0, py: -0.5, pz: z,
-      speed: rotSpeeds[i] * (rand() < 0.5 ? 1 : -1),
-      phase: rand(),
-    });
-  });
-
-  floor(0, 200, 18, 12, 0, "pad");
-  // Two scissoring walls that shove players straight off the landing pad.
-  obstacles.push({
-    id: nextId++, kind: "slider", role: "solid", style: "pusher",
-    size: { x: 5, y: 3.2, z: 1 },
-    px: 0, py: 1.6, pz: 199,
-    a: { x: -9, y: 1.6, z: 199 }, b: { x: 1, y: 1.6, z: 199 },
-    period: 3.4, phase: 0,
-  });
-  obstacles.push({
-    id: nextId++, kind: "slider", role: "solid", style: "pusher",
-    size: { x: 5, y: 3.2, z: 1 },
-    px: 0, py: 1.6, pz: 202,
-    a: { x: 9, y: 1.6, z: 202 }, b: { x: -1, y: 1.6, z: 202 },
-    period: 3.4, phase: 0.5,
-  });
-
-  checkpoints.push({
-    index: 3, volume: vol(0, 1.6, 204.5, 18, 4, 3),
-    spawn: { x: 0, y: 0.05, z: 204 }, yaw: 0, label: "The Carousel",
-  });
-
-  // ================================================== 5. THE FORK (two routes)
-  wall(0, 226, 0.8, 3, 38, 0, "divider");
-
-  // -- left route: three doors on a timed cycle -------------------------------
-  floor(-5, 226, 8, 38, 0, "lane");
-  wall(-9.4, 226, 0.8, 3, 38, 0, "divider");
-  const doorPeriod = 3.8 + rand() * 1.4;
-  [214, 226, 238].forEach((z, i) => {
-    obstacles.push({
-      id: nextId++, kind: "door", role: "solid", style: "door",
-      size: { x: 8, y: 3.4, z: 0.7 },
-      px: -5, py: 1.7, pz: z,
-      period: doorPeriod, phase: i * 0.34, openFraction: 0.42,
-    });
-  });
-
-  // -- right route: a plate-driven swing bridge over a gap --------------------
-  floor(6.5, 214, 11, 14, 0, "lane");
-  floor(6.5, 238, 11, 12, 0, "lane");
-  wall(12.4, 226, 0.8, 3, 38, 0, "divider");
-
-  const bridgeArmed = rand() < 0.72;
-  plates.push({
-    id: 0, volume: vol(6.5, 0.7, 210, 4, 1.8, 4),
-    activation: "hold", holdTicks: Math.round(PLATE_HOLD_SECONDS * TICK_RATE), label: "Bridge",
-  });
-  solids.push({
-    x: 6.5, y: -0.1, z: 210, hx: 2, hy: 0.2, hz: 2, yaw: 0,
-    style: bridgeArmed ? "plate" : "plate-dead",
-  });
-  // The first hand-authored Heavy target. It is only fired by an Impact
-  // shockwave, never by merely standing on it, so it teaches the distinction.
-  plates.push({
-    id: 1, volume: vol(0, 0.25, 54, 5, 0.5, 5), activation: "heavy",
-    holdTicks: TICK_RATE, label: "Impact Plate",
-  });
-  solids.push({ x: 0, y: -0.08, z: 54, hx: 2.5, hy: 0.08, hz: 2.5, yaw: 0, style: "impact-plate" });
-  if (bridgeArmed) {
-    obstacles.push({
-      id: nextId++, kind: "hinge", role: "solid", style: "swingbridge",
-      size: { x: 3.2, y: 0.8, z: 11 },
-      px: 6.5, py: -0.4, pz: 221.5,
-      offsetZ: 5.5,
-      closedYaw: -Math.PI / 2, openYaw: 0,
-      plate: 0,
-    });
-    notes.push("Swing bridge armed - hit the plate to open the right route");
-  } else {
-    notes.push("Swing bridge offline - the doors are the only way through");
-  }
-
-  floor(0, 249, 24, 10, 0, "pad");
-
-  // ======================================================= 6. THE CLIMB (ramp)
-  ramps.push({ x: 0, z: 261, hx: 8, hz: 7, y0: 0, y1: 4.5, style: "ramp" });
-  wall(-8.4, 261, 0.8, 5.5, 14, 0, "wall");
-  wall(8.4, 261, 0.8, 5.5, 14, 0, "wall");
-  floor(0, 280, 16, 24, 4.5, "top");
-
-  // [z, y, period] - low sweepers you jump, climbing with the ramp.
-  const sweeperSpecs: Array<[number, number, number]> = [
-    [259, 2.25, 2.3],
-    [265, 4.05, 1.95],
-    [275, 5.15, 2.5],
-  ];
-  sweeperSpecs.forEach(([z, y, period], i) => {
-    const flip = rand() < 0.5;
-    obstacles.push({
-      id: nextId++, kind: "slider", role: "hazard", style: "sweeper",
-      size: { x: 4.2, y: 1.5, z: 1.2 },
-      px: 0, py: y, pz: z,
-      a: { x: flip ? 9 : -9, y, z }, b: { x: flip ? -9 : 9, y, z },
-      period, phase: i * 0.37,
-      knock: 12,
-    });
-  });
-
-  const finish = vol(0, 6.5, 289, 16, 6, 3);
-  floor(0, 297, 16, 12, 4.5, "runout");
-  wall(0, 303.5, 18, 4, 1, 4.5, "wall");
-
-  // ------------------------------------------------------------ progress path
-  const path: Vec3[] = [
-    { x: 0, y: 0, z: -12 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 46 },
-    { x: 0, y: 0, z: 52 }, { x: 0, y: 0, z: 60 }, { x: 0, y: 0, z: 68 },
-    { x: 0, y: 0, z: 84 }, { x: 0, y: 0, z: 100 }, { x: 0, y: 0, z: 128 },
-    { x: 0, y: 0, z: 156 }, { x: 0, y: 0, z: 168 }, { x: 0, y: 0, z: 190 },
-    { x: 0, y: 0, z: 204 }, { x: 0, y: 0, z: 226 }, { x: 0, y: 0, z: 249 },
-    { x: 0, y: 0, z: 254 }, { x: 0, y: 2.25, z: 261 }, { x: 0, y: 4.5, z: 268 },
-    { x: 0, y: 4.5, z: 289 },
-  ];
-  const pathCum: number[] = [0];
-  for (let i = 1; i < path.length; i++) {
-    const dx = path[i].x - path[i - 1].x;
-    const dz = path[i].z - path[i - 1].z;
-    pathCum.push(pathCum[i - 1] + Math.hypot(dx, dz));
-  }
-
-  return {
-    seed,
-    solids, ramps, obstacles, checkpoints, plates,
-    finish,
-    finishGroundY: 4.5,
-    spawn: { x: 0, y: 0.05, z: -14 },
-    spawnYaw: 0,
-    path, pathLength: pathCum[pathCum.length - 1], pathCum,
-    crumbleCount,
-    notes,
-  };
-}
+export {
+  CRUMBLE_DELAY_TICKS, CRUMBLE_GONE_TICKS, PLATE_HOLD_SECONDS, PLATE_HOLD_TICKS,
+  START_GATE_STYLE,
+} from "./constants.js";
 
 /** Ordered spawn slots inside the lobby, so nobody spawns inside anyone else. */
 export function lobbySlot(index: number): { x: number; z: number } {

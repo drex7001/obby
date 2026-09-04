@@ -1,4 +1,5 @@
-import type { Level } from "../../src/shared/level.js";
+import { buildLevel, type Level } from "../../src/shared/level.js";
+import { baseTuning } from "../../src/shared/generator.js";
 import {
   SUB_STEPS, TICK_RATE,
 } from "../../src/shared/constants.js";
@@ -25,6 +26,10 @@ export function createSimState(overrides: Partial<SimState> = {}): SimState {
     plantUntil: -1, chainDecayUntil: -1,
     carving: false, carveUntil: -1, carveCool: -1, hopWindow: 0,
     knockTick: -1, knockX: 0, knockY: 0, knockZ: 0,
+    ammo: 0, fireCool: -1, actionHeld: false, useHeld: false, pickupIn: 0,
+    burnTick: -1, burnAmount: 0, shieldUntil: -1,
+    anchorId: 0, ropeLen: 0, tension: 0, tetherCool: -1, tetherUntil: -1,
+    recallCharges: 1, recallUntil: -1, recallHeld: 0,
     ...overrides,
   };
 }
@@ -43,10 +48,14 @@ export function createFlatLevel(withLowCeiling = false): Level {
   }
   return {
     seed: 1, solids, ramps: [], obstacles: [], checkpoints: [], plates: [],
-    finish: { x: 999, y: 0, z: 999, hx: 1, hy: 1, hz: 1 }, finishGroundY: 0,
+    decor: [], anchors: [], breakers: [], pickups: [], spawns: [],
+    finish: { x: 999, y: 0, z: 999, hx: 1, hy: 1, hz: 1, yaw: 0 }, finishGroundY: 0,
     spawn: { x: 0, y: 0.05, z: 0 }, spawnYaw: 0,
     path: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 10 }], pathLength: 10, pathCum: [0, 10],
-    crumbleCount: 0, notes: [],
+    crumbleCount: 0, breakerCount: 0, pickupCount: 0, shellCount: 0,
+    sections: [], courseLength: 10,
+    verbs: ["vault", "carve", "salvo", "tether"],
+    tuning: baseTuning(), mutators: [], notes: [],
   };
 }
 
@@ -56,6 +65,9 @@ export function createWorld(level: Level): SimWorld & { phase: WorldPhase } {
     crumbleTicks: new Array(level.crumbleCount).fill(-1),
     plateTicks: new Array(level.plates.length).fill(-1),
     plateSince: new Array(level.plates.length).fill(-1),
+    breakerTicks: new Array(level.breakerCount).fill(-1),
+    pickupTicks: new Array(level.pickupCount).fill(-1),
+    shellTicks: new Array(level.shellCount).fill(-1),
   };
   const world: SimWorld & { phase: WorldPhase } = {
     level, phase, tickBase: 0, others: [],
@@ -85,6 +97,9 @@ export function clonePhase(phase: WorldPhase): WorldPhase {
     crumbleTicks: Array.from(phase.crumbleTicks),
     plateTicks: Array.from(phase.plateTicks),
     plateSince: Array.from(phase.plateSince),
+    breakerTicks: Array.from(phase.breakerTicks),
+    pickupTicks: Array.from(phase.pickupTicks),
+    shellTicks: Array.from(phase.shellTicks),
   };
 }
 
@@ -93,4 +108,19 @@ export function firstStateDifference(a: SimState, b: SimState): string | null {
     if (!Object.is(a[key], b[key])) { return key; }
   }
   return null;
+}
+
+/**
+ * The first seeded course whose pool draw satisfies `want`.
+ *
+ * Since stage 4 a course is seven sections drawn from a pool, so no single seed
+ * is guaranteed to contain any particular feature. Tests that need one ask for
+ * it instead of hard-coding a seed and hoping.
+ */
+export function levelWith(want: (level: Level) => boolean, limit = 400): Level {
+  for (let seed = 1; seed <= limit; seed++) {
+    const level = buildLevel(seed);
+    if (want(level)) { return level; }
+  }
+  throw new Error(`no course in ${limit} seeds satisfied the requirement`);
 }

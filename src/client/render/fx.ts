@@ -38,6 +38,16 @@ const TONES: Record<FxKind, { freq: number; to: number; ms: number; type: Oscill
   fumble: { freq: 170, to: 80, ms: 210, type: "sawtooth", gain: 0.22 },
   heavy: { freq: 90, to: 42, ms: 360, type: "sawtooth", gain: 0.34 },
   hop: { freq: 510, to: 820, ms: 150, type: "triangle", gain: 0.22 },
+  shot: { freq: 900, to: 380, ms: 70, type: "square", gain: 0.14 },
+  break: { freq: 240, to: 900, ms: 160, type: "square", gain: 0.22 },
+  pickup: { freq: 660, to: 1320, ms: 180, type: "triangle", gain: 0.24 },
+  burn: { freq: 140, to: 520, ms: 300, type: "sawtooth", gain: 0.26 },
+  shield: { freq: 420, to: 700, ms: 240, type: "sine", gain: 0.22 },
+  tether: { freq: 300, to: 620, ms: 120, type: "sine", gain: 0.18 },
+  swing: { freq: 540, to: 980, ms: 200, type: "triangle", gain: 0.26 },
+  lift: { freq: 360, to: 900, ms: 260, type: "sine", gain: 0.24 },
+  recall: { freq: 900, to: 220, ms: 420, type: "sine", gain: 0.3 },
+  arm: { freq: 200, to: 150, ms: 120, type: "square", gain: 0.12 },
 };
 
 const TINTS: Record<FxKind, string> = {
@@ -50,6 +60,16 @@ const TINTS: Record<FxKind, string> = {
   fumble: "#ff9b78",
   heavy: "#ffcf72",
   hop: "#b9f6ff",
+  shot: "#ffe9a8",
+  break: "#ffd166",
+  pickup: "#ff9f45",
+  burn: "#ff7a45",
+  shield: "#6ee7ff",
+  tether: "#6ee7ff",
+  swing: "#a5f3ff",
+  lift: "#c4b5fd",
+  recall: "#c4b5fd",
+  arm: "#7c8399",
 };
 
 export class Fx {
@@ -108,8 +128,8 @@ export class Fx {
    * their sound so a six-player pile-up does not turn into noise.
    */
   burst(kind: FxKind, x: number, y: number, z: number, distance: number) {
-    const count = kind === "hit" ? 14 : kind === "land" ? 6 : 10;
-    const speed = kind === "hit" ? 7 : 4;
+    const count = kind === "hit" ? 14 : kind === "land" ? 6 : kind === "shot" ? 4 : 10;
+    const speed = kind === "hit" ? 7 : kind === "break" ? 8 : 4;
     const mat = this.tint(kind);
 
     for (let i = 0; i < count; i++) {

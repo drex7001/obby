@@ -272,6 +272,14 @@ tool rather than a traversal replacement.
 
 *Failure: a mistimed release leaves you slower than running.*
 
+*As built (stage 7):* exactly this, with the arc bottom solved in closed form
+rather than watched for — the angle from straight down over the angular speed is
+the time remaining, so the window opens *before* the bottom rather than only
+being detectable after it. "Early, rising" is the height case and "late,
+descending" is the wasted one, which is also the physically legible reading. The
+speed payout additionally requires real tangential speed, so hanging motionless
+under an anchor and letting go pays nothing.
+
 ## 3.5 Recall — the recovery verb
 
 Restore your position and velocity from 1.5 seconds ago.
@@ -291,6 +299,13 @@ back there.
 The freeze is not flavour — it is the window the server needs to confirm the
 authoritative snapshot, so the correction lands inside it and never snaps. The
 design cost and the technical requirement are the same 0.66 seconds.
+
+*As built (stage 8):* exactly this, on a four-tick hold of the context action.
+The history ring is indexed by world tick rather than appended to, which is what
+makes it survive a rollback replay; and the freeze holds position without
+zeroing velocity, so a restore onto ground that has since moved on resolves as
+an ordinary fall rather than a special case. The coin recharge from §7.2 landed
+with it.
 
 ## 3.6 How they chain
 
@@ -457,7 +472,7 @@ Difficulty 1–4; the verb each is built around.
 | --- | --- | --- | --- |
 | **The Spiral** | 2 | Vault | An ascending helix wrapping a column, turning 180° while climbing 8 u. Cut the corners or follow the turn |
 | **The Sieve** | 3 | Impact | A field of vertical pistons on offset cycles. No fixed safe path — the line you can take depends on the phase you arrive at |
-| **The Gallery** | 2 | Salvo | A long straight with breakers on the walls. Shoot to clear the hazard ahead, or run it as it stands |
+| **The Gallery** | 2 | Salvo | A gun off the fast line, and weak points on the walls that hold the bar ahead inert for five seconds |
 | **The Chasm** | 4 | Tether | A 30 u gap with three anchors and one clean line. Nothing catches you |
 | **The Watchtower** | 3 | Carve | Sentries sweeping stun beams and a turret on a fixed cycle over an open approach |
 | **The Cascade** | 3 | Impact | A descending waterfall of crumble platforms. Each drop is a landing window, and the drops pay overspeed |
@@ -548,6 +563,14 @@ A distinct prop class, deliberately **not** the hazards themselves.
 3. **Every section must be completable with no gun at all** — enforced by the bot
    sweep across a large seed sample.
 
+*As built (stage 6):* all five ground effects ship; the projectile row waits for
+the Watchers that fire them. The structural half of rule 3 is already enforced —
+everything a breaker builds or unlocks sits more than four units off the course
+centre-line, so the line a gunless runner takes is untouched — and the bot sweep
+confirms the rest in stage 10. The gun itself is placed by the generator on the
+first checkpoint bank rather than by a section, so no draw can leave a course
+without one.
+
 ## 5.5 Shooting other runners
 
 Not in the design. Not for technical reasons — the framework provides lag
@@ -584,6 +607,12 @@ Build these before enemies. Players do not experience "is this reactive?" — th
 experience "is this dangerous and readable?". The Watchers may make enemies
 unnecessary, and finding that out is cheap.
 
+*As built (stage 9):* all four, plus a Nest and a plate-armed Swarm. Every one
+of them is readable at least 1.2 s ahead at chain-8 speed, which is sixteen
+units of approach, and that floor is asserted over every course the pool can
+produce. A turret shell can be shot out of the air for most of its flight; doing
+it destroys the round, never the turret.
+
 ## 6.3 Enemies
 
 Two tiers.
@@ -606,6 +635,15 @@ through, which is exactly what a good threat should do anyway.
    toward it. That is the one thing no obstacle does — a spinner does not care
    where you are.
 3. **They commit visibly.** Wind-up, commit, follow through, recover.
+
+*As built (stage 9):* both tiers, on **one** mechanism. Every enemy publishes a
+committed arc rather than a position — tier 2's model, applied to tier 1 as
+well. Lag compensation is available and deliberately unused: tier 2 needs the
+derivable position anyway, and once a position can be recomputed there is
+nothing left for a rewind to reconstruct. `solid` stays a property of the kind:
+a Shambler and a Lurcher are never surfaces, a Bulwark is. Rule 3 comes free
+from the commit lead — the wind-up is published half a second before the lunge
+it belongs to starts, so the tell is always on screen first.
 
 ---
 
@@ -653,6 +691,12 @@ Purse caps at 30 so hoarding is not a strategy, and the question is always
 
 **Build Burn first.** It closes the loop with one number and proves the currency
 is fun before the rest exists.
+
+*As built (stages 6 and 8):* all four sinks ship. Burn, the Chain shield and the
+seal key landed with stage 6; the Recall recharge waited for stage 8, since there
+was nothing to recharge before it. Burn spends the whole purse on a tap of `E`
+and rides the input packet rather than a message, because it is a movement
+decision made at speed; the other three are room messages, validated server-side.
 
 ## 7.3 Race scoring
 
@@ -787,9 +831,13 @@ cushions.
 
 ## 10.1 Section pool
 
-The course is assembled from a registry by seed: pick six sections in a valid
+The course is assembled from a registry by seed: pick seven sections in a valid
 order subject to the pacing rules, each rolling its own variant. Fourteen sections
 in the pool, with structural variants rather than parameter jitter.
+
+Built in stage 4; the pool is stage 5. An opener, four middles, a rest beat after
+the hardest run, and the Climb — assembled at a cursor that carries a heading, so
+a course turns.
 
 ## 10.2 Mutators
 
@@ -805,6 +853,13 @@ The one trap: a mutator that changes a constant the client reads directly will
 desync. Any tuning value a mutator varies must move onto the level so both ends
 read the same number from the same place.
 
+*As built (stage 11):* all twelve, plus One shot. The migration was done first
+and is now enforced by a test that greps the step for the four constant names a
+mutator varies and fails if any of them comes back. The deck is drawn from the
+seed and then *published* rather than re-derived — the spec allows either, and
+publishing is what lets a mode force or forbid part of the deck without a second
+channel. A third of rounds run clean, because variety needs a baseline.
+
 ## 10.3 Modes
 
 | Mode | Rules |
@@ -814,6 +869,12 @@ read the same number from the same place.
 | **Collect** | Gather N tokens placed beside hazards, then finish — a risk/reward decision per section |
 | **Survival** | The course closes behind you; last runner standing |
 | **Hunt** | One runner starts ahead as the hare; catching them by proximity scores |
+
+*As built (stage 11):* Race, Time attack, Collect, Survival and Hunt. Relay is
+the one that did not ship — it is last in its own build-by-cost order, and it
+needs a team field on a `Player` schema that is at Colyseus' hard ceiling of 63,
+so it is blocked on a deliberate decision about what to trade away rather than
+on effort.
 
 ---
 

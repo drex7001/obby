@@ -2,6 +2,7 @@ import assert from "assert";
 
 import { SUB_STEPS, TICK_RATE, KILL_Y, STUN_TICKS } from "../src/shared/constants.js";
 import { buildLevel, CRUMBLE_DELAY_TICKS, type Level } from "../src/shared/level.js";
+import { levelWith } from "./helpers/simulation.js";
 import { makePose, poseAt, type WorldPhase } from "../src/shared/obstacles.js";
 import {
   stepPlayer, type SimInput, type SimState, type SimWorld,
@@ -24,6 +25,9 @@ function freshWorld(level: Level): SimWorld & { phase: WorldPhase } {
       crumbleTicks: new Array(level.crumbleCount).fill(-1),
       plateTicks: new Array(level.plates.length).fill(-1),
       plateSince: new Array(level.plates.length).fill(-1),
+      breakerTicks: new Array(level.breakerCount).fill(-1),
+      pickupTicks: new Array(level.pickupCount).fill(-1),
+      shellTicks: new Array(level.shellCount).fill(-1),
     },
     tickBase: 0,
     others: [],
@@ -39,6 +43,10 @@ function player(over: Partial<SimState> = {}): SimState {
     plantUntil: -1, chainDecayUntil: -1,
     carving: false, carveUntil: -1, carveCool: -1, hopWindow: 0,
     knockTick: -1, knockX: 0, knockY: 0, knockZ: 0,
+    ammo: 0, fireCool: -1, actionHeld: false, useHeld: false, pickupIn: 0,
+    burnTick: -1, burnAmount: 0, shieldUntil: -1,
+    anchorId: 0, ropeLen: 0, tension: 0, tetherCool: -1, tetherUntil: -1,
+    recallCharges: 1, recallUntil: -1, recallHeld: 0,
     ...over,
   };
 }
@@ -109,8 +117,11 @@ describe("movement", () => {
 });
 
 describe("moving platforms", () => {
-  const level = buildLevel(2024);
-  const mover = level.obstacles.find((o) => o.kind === "slider" && o.role === "solid")!;
+  // A course whose draw includes a platform that actually travels sideways.
+  const level = levelWith((l) => l.obstacles.some(
+    (o) => o.kind === "slider" && o.role === "solid" && Math.abs(o.a!.x - o.b!.x) > 4));
+  const mover = level.obstacles.find(
+    (o) => o.kind === "slider" && o.role === "solid" && Math.abs(o.a!.x - o.b!.x) > 4)!;
 
   it("carries a player standing on it", () => {
     const world = freshWorld(level);
@@ -137,7 +148,7 @@ describe("moving platforms", () => {
 });
 
 describe("crumble platforms", () => {
-  const level = buildLevel(2024);
+  const level = levelWith((l) => l.obstacles.some((o) => o.kind === "crumble"));
   const crumble = level.obstacles.find((o) => o.kind === "crumble")!;
 
   it("reports the touch, then stops being solid once it has collapsed", () => {
@@ -167,38 +178,40 @@ describe("crumble platforms", () => {
 });
 
 describe("the pressure plate and the swing bridge", () => {
-  // Seeds vary whether the bridge is armed at all; find one where it is.
-  let level!: Level;
-  for (let seed = 1; seed < 200; seed++) {
-    const candidate = buildLevel(seed);
-    if (candidate.obstacles.some((o) => o.kind === "hinge")) { level = candidate; break; }
-  }
+  // The pool decides whether a course has a bridge at all; find one that does.
+  const level: Level = levelWith((l) => l.obstacles.some((o) => o.kind === "hinge"));
 
   it("swings the bridge into place while the plate is hot, and back after", () => {
-    assert.ok(level, "some seed should arm the bridge");
     const hinge = level.obstacles.find((o) => o.kind === "hinge")!;
     const world = freshWorld(level);
+    // The generator bakes the section's heading into `baseYaw`, so the closed
+    // and open angles are relative to that, not to world +Z.
+    const base = hinge.baseYaw ?? 0;
 
     const closed = poseAt(hinge, 100, world.phase, makePose()).yaw;
-    assert.ok(Math.abs(closed - hinge.closedYaw!) < 1e-6, "starts closed");
+    assert.ok(Math.abs(closed - (base + hinge.closedYaw!)) < 1e-6, "starts closed");
+
+    // The bridge names its own plate. A course carries several now, and which
+    // index the bridge's lands on depends on the draw.
+    const plate = level.plates[hinge.plate!];
 
     // Plate pressed at tick 100, hot for its hold window.
-    (world.phase.plateSince as number[])[0] = 100;
-    (world.phase.plateTicks as number[])[0] = 100 + level.plates[0].holdTicks;
+    (world.phase.plateSince as number[])[hinge.plate!] = 100;
+    (world.phase.plateTicks as number[])[hinge.plate!] = 100 + plate.holdTicks;
 
     const opening = poseAt(hinge, 110, world.phase, makePose()).yaw;
     const open = poseAt(hinge, 140, world.phase, makePose()).yaw;
     assert.ok(Math.abs(opening - closed) > 1e-4, "should begin swinging immediately");
-    assert.ok(Math.abs(open - hinge.openYaw!) < 1e-6, `should be fully open, got ${open}`);
+    assert.ok(Math.abs(open - (base + hinge.openYaw!)) < 1e-6, `should be fully open, got ${open}`);
 
     // Regression: `since` and `until` are separate stamps. With one stamp, a
     // player standing on the plate kept restarting the ramp and the bridge
     // never finished opening.
-    const stillOpen = poseAt(hinge, 100 + level.plates[0].holdTicks - 1, world.phase, makePose()).yaw;
-    assert.ok(Math.abs(stillOpen - hinge.openYaw!) < 1e-6, "stays open while the plate is hot");
+    const stillOpen = poseAt(hinge, 100 + plate.holdTicks - 1, world.phase, makePose()).yaw;
+    assert.ok(Math.abs(stillOpen - (base + hinge.openYaw!)) < 1e-6, "stays open while the plate is hot");
 
-    const after = poseAt(hinge, 100 + level.plates[0].holdTicks + 40, world.phase, makePose()).yaw;
-    assert.ok(Math.abs(after - hinge.closedYaw!) < 1e-6, "swings back once the plate cools");
+    const after = poseAt(hinge, 100 + plate.holdTicks + 40, world.phase, makePose()).yaw;
+    assert.ok(Math.abs(after - (base + hinge.closedYaw!)) < 1e-6, "swings back once the plate cools");
   });
 
   it("reports a player standing on the plate", () => {
@@ -207,7 +220,14 @@ describe("the pressure plate and the swing bridge", () => {
     world.onPlate = (id) => hits.push(id);
 
     const plate = level.plates[0];
-    const p = player({ x: plate.volume.x, y: 0, z: plate.volume.z });
+    // The section the plate belongs to sits at whatever elevation the course
+    // had reached, so the floor under it is not y 0 - spawn on the volume's own
+    // floor rather than the world's.
+    const p = player({
+      x: plate.volume.x,
+      y: plate.volume.y - plate.volume.hy + 0.05,
+      z: plate.volume.z,
+    });
     run(p, idle, world, 50, 3);
 
     assert.ok(hits.length > 0, "standing on the plate should report it");
@@ -260,14 +280,14 @@ describe("checkpoints and respawning", () => {
 });
 
 describe("hazards", () => {
-  const level = buildLevel(2024);
+  const level = levelWith((l) => l.obstacles.some((o) => o.kind === "spinner"));
 
   it("knocks a player off their feet and stuns them", () => {
     const world = freshWorld(level);
     const bar = level.obstacles.find((o) => o.kind === "spinner")!;
 
     // Sit right where the sweeping arm passes, at its own height.
-    const p = player({ x: 0.8, y: 0, z: bar.pz, grounded: true });
+    const p = player({ x: bar.px + 0.8, y: 0, z: bar.pz, grounded: true });
     let hit = false;
     for (let i = 0; i < 120 && !hit; i++) {
       ctx.tick = i + 1;

@@ -84,7 +84,7 @@ describe("impact and chain", () => {
     const level = createFlatLevel();
     level.plates.push({
       id: 0,
-      volume: { x: 0, y: 0.25, z: 0, hx: 2, hy: 0.5, hz: 2 },
+      volume: { x: 0, y: 0.25, z: 0, hx: 2, hy: 0.5, hz: 2, yaw: 0 },
       activation: "heavy",
       holdTicks: 90,
       label: "Heavy test plate",
@@ -107,7 +107,7 @@ describe("impact and chain", () => {
     const level = createFlatLevel();
     level.plates.push({
       id: 0,
-      volume: { x: 0, y: 0.25, z: 0, hx: 2, hy: 0.5, hz: 2 },
+      volume: { x: 0, y: 0.25, z: 0, hx: 2, hy: 0.5, hz: 2, yaw: 0 },
       activation: "heavy",
       holdTicks: 90,
       label: "Heavy test plate",

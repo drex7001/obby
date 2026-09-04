@@ -81,6 +81,24 @@ const STYLES: Record<string, StyleDef> = {
   bar: { hex: "#ff4b6e", glow: 0.4, spec: 0.28 },
   hammer: { hex: "#ff4062", glow: 0.4, spec: 0.28 },
   sweeper: { hex: "#ff8f2e", glow: 0.42, spec: 0.28 },
+  beam: { hex: "#ff6a4b", glow: 0.46, spec: 0.3 },
+
+  panel: { hex: "#4d5a92", glow: 0.1 },
+  shell: { hex: "#ff8f2e", glow: 0.55, spec: 0.4 },
+  sentry: { hex: "#ff5a4b", glow: 0.5, spec: 0.3 },
+  hunter: { hex: "#d4553f", glow: 0.4, spec: 0.3 },
+  jaws: { hex: "#8a6a45", glow: 0.2 },
+  nest: { hex: "#4a3a63", glow: 0.24 },
+  swarm: { hex: "#c2703a", glow: 0.5 },
+  shambler: { hex: "#7f5aa8", glow: 0.26 },
+  lurcher: { hex: "#c2415e", glow: 0.34, spec: 0.3 },
+  bulwark: { hex: "#4a6f9c", glow: 0.18 },
+  piston: { hex: "#5f6aa4", glow: 0.14, spec: 0.2 },
+  breaker: { hex: "#ffd166", glow: 0.44, spec: 0.35 },
+  pod: { hex: "#ffc94a", glow: 0.5, spec: 0.4 },
+  crate: { hex: "#7fd4a0", glow: 0.4, spec: 0.3 },
+  gun: { hex: "#ff9f45", glow: 0.6, spec: 0.4 },
+  anchor: { hex: "#6ee7ff", glow: 0.5 },
 
   // Non-collidable dressing.
   post: { hex: "#2b3052" },
@@ -248,6 +266,18 @@ export class Stage {
     mat.specularPower = 64;
     this.materials.set(key, mat);
     return mat;
+  }
+
+  /**
+   * Thicken the fog, for the mutator of the same name.
+   *
+   * Presentation only, and deliberately so: the deck's rule is that anything
+   * affecting the *simulation* lives on the level, and a sightline is the one
+   * thing on that list which genuinely is only ever seen.
+   */
+  setFog(thick: boolean) {
+    this.scene.fogDensity = thick ? 0.028 : 0.0092;
+    this.camera.maxZ = thick ? 150 : 460;
   }
 
   /** Keep the shadow frustum wrapped around wherever the player currently is. */

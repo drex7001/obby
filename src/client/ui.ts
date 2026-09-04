@@ -19,6 +19,15 @@ export interface BoardRow {
   dnf: boolean;
   finishMs: number;
   self: boolean;
+  bot: boolean;
+  seriesPoints: number;
+}
+
+/** The runner immediately ahead or behind, and the gap in seconds. */
+export interface Rival {
+  name: string;
+  colour: number;
+  seconds: number;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -28,6 +37,14 @@ export class UI {
   private posRank = $("pos-rank");
   private posOf = $("pos-of");
   private section = $("section");
+  private kit = $("kit");
+  private ammo = $("ammo");
+  private coins = $("coins");
+  private recall = $("recall");
+  private series = $("series");
+  private rivals = $("rivals");
+  private rivalAhead = $("rival-ahead");
+  private rivalBehind = $("rival-behind");
   private clock = $("clock");
   private round = $("round");
   private board = $<HTMLOListElement>("board");
@@ -50,6 +67,9 @@ export class UI {
   private lastClock = "";
   private lastPos = "";
   private lastSection = "";
+  private lastKit = "";
+  private lastRivals = "";
+  private lastSeries = "";
   private lastNotes = "";
   private lastBoardKey = "";
   private calloutUntil = 0;
@@ -119,6 +139,70 @@ export class UI {
     this.section.textContent = label;
   }
 
+  /**
+   * Ammo, coins and whether a Chain shield is armed.
+   *
+   * Ammo is drawn as pips rather than a number because it is read at speed and
+   * never counted - "have I got a shot" is the only question a runner asks.
+   */
+  setKit(
+    ammo: number, magazine: number, coins: number, recalls: number, shielded: boolean,
+  ) {
+    const key = `${ammo}/${magazine}:${coins}:${recalls}:${shielded ? 1 : 0}`;
+    if (key === this.lastKit) { return; }
+    this.lastKit = key;
+
+    this.recall.textContent = "\u25c0".repeat(recalls);
+    this.recall.classList.toggle("spent", recalls === 0);
+    this.kit.hidden = ammo === 0 && coins === 0 && recalls === 0 && !shielded;
+    this.ammo.textContent = "|".repeat(ammo).padEnd(magazine, "\u00b7");
+    this.ammo.classList.toggle("empty", ammo === 0);
+    this.coins.textContent = String(coins);
+    this.coins.classList.toggle("spent", coins === 0);
+    this.coins.classList.toggle("shielded", shielded);
+  }
+
+  /**
+   * Who is immediately ahead and behind, and by how much.
+   *
+   * Nothing here is predicted, and it deliberately does not update every frame:
+   * a marker that flickers between two near-equal runners is worse than no
+   * marker, so the caller applies hysteresis and this only redraws on a real
+   * change.
+   */
+  setRivals(ahead: Rival | null, behind: Rival | null) {
+    const key = `${ahead?.name}:${ahead?.seconds.toFixed(1)}|${behind?.name}:${behind?.seconds.toFixed(1)}`;
+    if (key === this.lastRivals) { return; }
+    this.lastRivals = key;
+
+    this.rivals.hidden = !ahead && !behind;
+    this.write(this.rivalAhead, ahead, "\u25b2");
+    this.write(this.rivalBehind, behind, "\u25bc");
+  }
+
+  private write(host: HTMLElement, rival: Rival | null, arrow: string) {
+    if (!rival) { host.replaceChildren(); return; }
+    const pip = document.createElement("span");
+    pip.className = "pip";
+    pip.style.background = PLAYER_COLOURS[rival.colour % PLAYER_COLOURS.length];
+    const who = document.createElement("span");
+    who.textContent = ` ${arrow} ${rival.name}`;
+    const gap = document.createElement("span");
+    gap.className = "gap";
+    gap.textContent = `${rival.seconds.toFixed(1)}s`;
+    host.replaceChildren(pip, who, gap);
+  }
+
+  /** Series standing, as "round 2 of 5 · 8 pts". */
+  setSeries(round: number, length: number, points: number, winner: string) {
+    const text = winner
+      ? `Series won by ${winner}`
+      : `Round ${round + 1} of ${length} · ${points} pts`;
+    if (text === this.lastSeries) { return; }
+    this.lastSeries = text;
+    this.series.textContent = text;
+  }
+
   setClock(ms: number, urgent: boolean) {
     const text = formatClock(ms);
     if (text !== this.lastClock) {
@@ -128,8 +212,9 @@ export class UI {
     this.clock.classList.toggle("urgent", urgent);
   }
 
-  setRound(round: number, phase: string) {
-    this.round.textContent = `Round ${round + 1} · ${phase}`;
+  setRound(round: number, phase: string, mode = "race") {
+    const label = mode === "race" ? "" : ` · ${mode}`;
+    this.round.textContent = `Round ${round + 1} · ${phase}${label}`;
   }
 
   setNotes(notes: string[]) {
@@ -142,7 +227,8 @@ export class UI {
   setBoard(rows: BoardRow[]) {
     // Rebuild only when the visible content actually changed.
     const key = rows.map((r) =>
-      `${r.sessionId}:${r.rank}:${r.finished ? 1 : 0}:${r.dnf ? 1 : 0}:${Math.round(r.progress * 200)}`,
+      `${r.sessionId}:${r.rank}:${r.finished ? 1 : 0}:${r.dnf ? 1 : 0}:` +
+      `${Math.round(r.progress * 200)}:${r.seriesPoints}`,
     ).join("|");
     if (key === this.lastBoardKey) { return; }
     this.lastBoardKey = key;
@@ -164,6 +250,19 @@ export class UI {
       const who = document.createElement("span");
       who.className = "who";
       who.textContent = r.name;
+
+      if (r.bot) {
+        const mark = document.createElement("span");
+        mark.className = "bot";
+        mark.textContent = "BOT";
+        who.append(mark);
+      }
+      if (r.seriesPoints > 0) {
+        const pts = document.createElement("span");
+        pts.className = "pts";
+        pts.textContent = String(r.seriesPoints);
+        who.append(pts);
+      }
 
       const val = document.createElement("span");
       val.className = "val";

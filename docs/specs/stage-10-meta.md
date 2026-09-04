@@ -288,3 +288,129 @@ Direct attacks on another runner — no shooting them, no melee, no targeted
 abilities. The leader cannot see behind while running a hazard course, so an
 attack from behind is uncontestable by construction. Recorded in
 [decisions.md](../decisions.md) with the three changes that would reverse it.
+
+---
+
+## As built
+
+Series and splits in [`RaceRoom.ts`](../../src/rooms/RaceRoom.ts), the bot in
+[`bot.ts`](../../src/rooms/bot.ts), the headless harness in
+[`sweep.ts`](../../src/rooms/sweep.ts), recording and verification in
+[`replay.ts`](../../src/rooms/replay.ts), and the gates in
+[`test/stages/meta.test.ts`](../../test/stages/meta.test.ts). Two new commands:
+`npm run sweep` and `npm run replay`.
+
+Five of the six features shipped whole. The sixth - interference - shipped the
+two the spec commits to and stopped at the decision point the spec puts in the
+middle of it.
+
+### 10.4 · The bot does not meet its bar, and that is the headline
+
+**Measured: 44.5% at hard over 200 seeds, 13% at easy over 100.** The spec asks
+for >= 95% and >= 70%. It is not close, and no amount of framing makes it close.
+
+What did ship is the part that was structurally hard and the part that is
+useful today:
+
+- **The indirection is real.** A bot is an object that fills an input channel,
+  `simulatePlayers()` cannot tell the difference, and a test walks every file
+  under `src/shared` asserting the word "bot" does not appear in any of them.
+  Bot frames go through the same `sanitize` a packet does, so a bot cannot press
+  anything a human could not.
+- **Everything it knows, a human could know.** The centre-line is the navmesh
+  because race position is already scored on it; hazards come from `poseAt()`
+  and `raycastWorld()`; when it is stuck it presses R. Difficulty is reaction
+  time, Impact timing error, which verbs it uses, and how often it lapses -
+  never speed, reach or knowledge.
+- **The sweep is the deliverable.** `npm run sweep 1000 hard` reports the
+  completion rate *and the per-section rate*, which is the thing the spec
+  actually asks for: "make bot navigability an explicit constraint on the
+  section pool". It already is one - the numbers below are now a regression
+  test.
+
+Where it fails, per section, at hard:
+
+| Section | Cleared | Why |
+| --- | --- | --- |
+| **The Chasm** | 0% | Needs chained swings; see below |
+| **The Works** | 50% | Doors and jaws are timing gates it reads badly |
+| **Pendulum Pass** | 68% | A three-metre deck with four heads on it |
+| Carousel, Drift, Watchtower, Spiral | 91-95% | Occasional mistimed platform |
+| Everything else | 98-100% | |
+
+**It has already earned its keep.** The first sweep found a real collision bug:
+a pressure-plate pad was a 0.1 u proud *solid*, and the capsule's rounded cap
+could hang on its corner - a runner walking onto it at the wrong angle stopped
+dead a centimetre above the floor and could not move. Plate pads are decor now.
+A human would have hit that eventually and filed it as "I got stuck on nothing".
+
+**And it found a design tension the specs did not know they had.** The Chasm is
+authored for *chained* swings across three or four anchors; the tether's
+45-tick re-attach cooldown forbids chaining. One swing plus its release reaches
+about thirty units, the gap is 26-34, and the bot goes into the pit every time.
+Narrowing the gap was tried and did not help, so the change was reverted rather
+than shipped on a bad diagnosis - the real answer is a decision about which of
+the two specs gives, and that is a design call rather than a bug fix.
+
+### 10.5 · The replay verifies itself, and immediately caught something
+
+`npm run replay` records bot races and re-runs them, regenerating every stamp
+and asserting it matches. The first run diverged on its first seed - and the
+divergence was real, in the *recording* rather than the simulation: the
+recorder stored the tick a frame was consumed on but not the **seq** it was
+consumed at, and `tickBase + seq` is what obstacle motion is indexed by. Every
+stamp came out a tick late. That is exactly the class of bug the spec predicts
+("a replay using only the initial base drifts exactly as a lagging client
+would"), and it is the reason the recording now carries both numbers.
+
+A test tampers with a recording - one stamp value, then a second of input
+nobody pressed - and asserts both are caught. A replay that cannot fail proves
+nothing.
+
+An eighty-second bot race records to about 800 KB of JSON, uncompressed and
+un-packed; the spec's ~120 KB assumes the packed input format, which is a
+serialisation change rather than a design one.
+
+### 10.6 · Interference stopped where the spec says to stop
+
+Slipstream and the contested plate shipped. Both are as specified: drafting
+within twelve degrees and 1.5-5 u behind moves a Chain level every two seconds,
+one-on-one so a pack cannot stack on one leader, and computed entirely in the
+room from positions it already has - Class C, never predicted. The Works' bridge
+plate becomes a *held* plate the moment there are three connected runners, and
+reverts to the eight-second hold below that so a duo is never stuck.
+
+**Committed traps and the co-op gate did not ship**, because step 3 of the
+spec's own build order is "playtest, then decide whether anything else is
+needed", and that playtest has not happened. The spec is emphatic that "every
+mechanic past sufficiency makes the race noisier rather than deeper", and
+shipping two more player-to-player mechanics on the assumption that the first
+two were insufficient would be exactly the mistake it warns about.
+
+### 10.3 · Influence is a breaker a spectator shot
+
+Rather than a new prop class, a finished runner's charge fires an existing
+**breaker** - which is already the section author's declaration of what may be
+changed, and already guaranteed to be a window or a route rather than a
+deletion. That makes all five rules fall out: it affects the section rather
+than a runner, it is announced by name the moment it is bought, geometry moves
+`INFLUENCE_TELEGRAPH_TICKS` later, it cannot stun anybody, and it is refused
+inside the last ten seconds.
+
+The free spectator camera is the one piece of 10.3 that is not here. It is
+presentation-only and needs the follow rig to detach and cycle, which is its own
+piece of work.
+
+### 10.1 / 10.2 · The cheap ones, whole
+
+Series scoring is 5/3/2/1 with a DNF at nothing and the final round doubled,
+ending at five rounds or fifteen points, with a mid-series joiner seeded at the
+current last place. A tie at the top leaves the series live rather than crowning
+an arbitrary one of them.
+
+Splits are stamped the tick a checkpoint is banked and never revised. One
+deviation: **the previous round's reference lives on the room, not on the
+player.** `Player` is two fields from Colyseus' hard ceiling of 63 - adding
+`prevSplits` per player was what actually hit it - and a leader is measured
+against the previous round's *best*, which one array on the room says as well as
+one per player would.

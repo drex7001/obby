@@ -148,13 +148,45 @@ await a.keyboard.up("w");
 const hopped = await snap(a);
 console.log("A after carve hop:", JSON.stringify(hopped.self));
 
+// Stage 6: the gun is level content on the first bank, so a smoke run that
+// only reaches the opener will not have one. What this checks is the part a
+// unit test cannot - that firing, burning and buying drive the HUD and the
+// renderer without throwing.
+console.log("--- the salvo ---");
+// The HUD is driven directly, the same way the results screen below is: a
+// smoke run cannot be relied on to reach the gun on the first bank.
+await a.evaluate(() => {
+  window.__ui.setKit(3, 4, 11, 1, true);
+  window.__ui.setRivals(
+    { name: "Bravo", colour: 1, seconds: 1.8 },
+    { name: "Vex", colour: 2, seconds: 3.4 },
+  );
+  window.__ui.setSeries(1, 5, 8, "");
+});
+for (let i = 0; i < 5; i++) {
+  await a.keyboard.press("f");
+  await wait(180);
+}
+await a.keyboard.press("e");
+await a.keyboard.press("1");
+await a.keyboard.press("2");
+await a.keyboard.press("3");
+// Stage 8: hold the context action past the four-tick arm. Whether a restore
+// is available depends on the race, but the arming path, the ghost and the
+// freeze all have to survive being driven for real.
+await hold(a, ["e"], 900);
+await wait(700);
+const armed = await snap(a);
+console.log("A after firing:", JSON.stringify(armed.self));
+await a.screenshot({ path: `${SHOTS}/06-salvo.png` });
+
 console.log("--- results screen ---");
 await a.evaluate(() => {
   window.__ui.showResults([
-    { sessionId: "1", name: "Alpha", colour: 0, rank: 1, progress: 1, finished: true, dnf: false, finishMs: 82340, self: true },
-    { sessionId: "2", name: "Bravo", colour: 1, rank: 2, progress: 1, finished: true, dnf: false, finishMs: 89120, self: false },
-    { sessionId: "3", name: "Charlie", colour: 2, rank: 3, progress: 1, finished: true, dnf: false, finishMs: 104870, self: false },
-    { sessionId: "4", name: "Delta", colour: 3, rank: 4, progress: 0.62, finished: false, dnf: true, finishMs: 0, self: false },
+    { sessionId: "1", name: "Alpha", colour: 0, rank: 1, progress: 1, finished: true, dnf: false, finishMs: 82340, self: true, bot: false, seriesPoints: 8 },
+    { sessionId: "2", name: "Bravo", colour: 1, rank: 2, progress: 1, finished: true, dnf: false, finishMs: 89120, self: false, bot: false, seriesPoints: 5 },
+    { sessionId: "3", name: "Vex", colour: 2, rank: 3, progress: 1, finished: true, dnf: false, finishMs: 104870, self: false, bot: true, seriesPoints: 3 },
+    { sessionId: "4", name: "Delta", colour: 3, rank: 4, progress: 0.62, finished: false, dnf: true, finishMs: 0, self: false, bot: false, seriesPoints: 0 },
   ], "Final standings");
   window.__ui.setResultsCountdown(7);
 });

@@ -235,3 +235,66 @@ the raycast helper (stage 0) is the only prerequisite, and it is about forty lin
 
 ---
 
+---
+
+## As built
+
+Shot resolution in [`salvo.ts`](../../src/shared/salvo.ts), the breaker and
+pickup kinematics in [`obstacles.ts`](../../src/shared/obstacles.ts), the
+magazine and the spend in [`movement.ts`](../../src/shared/movement.ts), the
+awards and purchases in [`RaceRoom.ts`](../../src/rooms/RaceRoom.ts), and the
+gates in [`test/stages/salvo.test.ts`](../../test/stages/salvo.test.ts).
+
+The whole build order shipped, except step 5: shooting down a turret shell needs
+Watchers, which arrive in stage 9.
+
+**All five breaker effects exist, and each one is authored where it belongs.**
+Weak points on the Gallery's walls; coin pods on the two sections that can be a
+course's rest beat, because the rest beat is where aiming is affordable; a
+support and a crate in the Works; a sealed catwalk in the Sieve. That spread is
+deliberate - a currency whose only source is one section in three is a currency
+most rounds do not have.
+
+**The gun itself belongs to the generator, not to a section.** It sits on the
+first checkpoint bank, off to one side. A course whose draw happens to contain
+no armed section would otherwise have no gun at all, and "did you find a gun" is
+a lottery rather than a decision. A bank is the right spot for the same reason
+it carries the checkpoint: it is the one place on the course where looking
+sideways is affordable, and two runners converging on it is a race within the
+race.
+
+### The pod share rule is a targeting rule, not an arbitration rule
+
+"Two players hitting one pod within 5 ticks both get coins" cannot be
+implemented in the award path alone. The server steps players one after another,
+so if the first shooter's hit stamps the breaker immediately, the second
+shooter's shot *cannot connect at all* - `resolveShot` skips a broken breaker.
+So the sharing lives in the targeting test: a pod stays shootable for five ticks
+after the first hit, everything else is gone the instant it is shot. The fire
+cooldown is eight ticks, so no one can collect twice from one pod.
+
+### Three deviations
+
+1. **Burn spends the whole purse, on the input packet; the shield and the seal
+   key are room messages.** Burn is a movement decision made at speed and has to
+   land on an exact tick, so it rides the `use` bit that has been on the wire
+   since stage 0 and is applied by the buyer's own step. The other two are
+   deliberate and rare, and nothing about them needs tick accuracy - a message
+   is the honest shape for them, and it keeps a purchase menu out of the
+   simulation.
+2. **The Recall recharge is not here.** It buys a stage-8 ability; it lands with
+   the ability rather than in front of it.
+3. **The `disable` window is spent, not repeatable.** A weak point is destroyed
+   permanently but only holds its hazard inert for five seconds, so each one is
+   a single five-second window rather than a switch. That is what keeps the
+   effect temporary in the sense Risk 1 means it.
+
+### Where it stands against the acceptance list
+
+Every item is covered by `test/stages/salvo.test.ts` except two. "Completable
+with the gun disabled, bot sweep, 1000 seeds" needs the runner that arrives with
+stage 10; what is checkable without one *is* checked - no hazard is ever removed
+(200 seeds), and everything a breaker builds or unlocks sits more than four
+units off the course centre-line, so a player who never picks a gun up runs
+exactly the course they always did. "A turret projectile can be shot down" is
+tracked in stage 9 with the Watchers that fire them.

@@ -132,11 +132,17 @@ export function bodyOverlapsBox(body: Body, box: BoxLike): boolean {
   return lowY < boxTop - CONTACT_EPS && highY > boxBottom + CONTACT_EPS;
 }
 
-/** Surface height of a ramp under (x, z), or `NaN` when outside its footprint. */
+/**
+ * Surface height of a ramp under (x, z), or `NaN` when outside its footprint.
+ *
+ * The ramp rises along its OWN +Z, which `yaw` orients in the world. A ramp
+ * with `yaw: 0` takes the same branch it always did.
+ */
 export function rampSurfaceY(ramp: Ramp, x: number, z: number): number {
-  if (Math.abs(x - ramp.x) > ramp.hx + PLAYER_RADIUS) { return NaN; }
-  if (Math.abs(z - ramp.z) > ramp.hz) { return NaN; }
-  const t = (z - (ramp.z - ramp.hz)) / (ramp.hz * 2);
+  const l = toLocal(x - ramp.x, z - ramp.z, ramp.yaw);
+  if (Math.abs(l.x) > ramp.hx + PLAYER_RADIUS) { return NaN; }
+  if (Math.abs(l.z) > ramp.hz) { return NaN; }
+  const t = (l.z + ramp.hz) / (ramp.hz * 2);
   return ramp.y0 + (ramp.y1 - ramp.y0) * t;
 }
 
@@ -325,17 +331,27 @@ export function hazardHit(
 // Trigger volumes
 // ---------------------------------------------------------------------------
 
-/** Does the player's body overlap this axis-aligned volume? */
+/** Does the player's body overlap this volume? */
 export function inVolume(x: number, y: number, z: number, v: Volume, height = PLAYER_HEIGHT): boolean {
-  return Math.abs(x - v.x) <= v.hx + PLAYER_RADIUS
-    && Math.abs(z - v.z) <= v.hz + PLAYER_RADIUS
+  const l = toLocal(x - v.x, z - v.z, v.yaw);
+  return Math.abs(l.x) <= v.hx + PLAYER_RADIUS
+    && Math.abs(l.z) <= v.hz + PLAYER_RADIUS
     && y + height >= v.y - v.hy
     && y <= v.y + v.hy;
 }
 
-/** Cheap rejection so the long course does not cost a full scan per sub-step. */
+/**
+ * Cheap rejection so the long course does not cost a full scan per sub-step.
+ *
+ * A yawed box gets the conservative `hx + hz` bound rather than a trig-exact
+ * one. It admits a few more candidates to the exact resolver, which is free;
+ * the alternative - a sin/cos pair per box per sub-step - is not. Getting this
+ * wrong the other way would cull the slab a runner is standing on.
+ */
 export function nearStatic(s: SolidBox, x: number, z: number): boolean {
-  return Math.abs(s.x - x) <= s.hx + 2 && Math.abs(s.z - z) <= s.hz + 2;
+  const reach = s.yaw === 0 ? 0 : s.hx + s.hz;
+  return Math.abs(s.x - x) <= (s.yaw === 0 ? s.hx : reach) + 2
+    && Math.abs(s.z - z) <= (s.yaw === 0 ? s.hz : reach) + 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,21 +505,27 @@ export function raycastWorld(
     const rise = ramp.y1 - ramp.y0;
     const length = ramp.hz * 2;
     const slope = rise / length;
-    const startZ = ramp.z - ramp.hz;
-    const denom = dy - slope * dz;
+    // Solve in the ramp's own frame, where the surface is still a plane rising
+    // along +Z, then rotate the normal back out.
+    const o = toLocal(ox - ramp.x, oz - ramp.z, ramp.yaw);
+    const lox = o.x, loz = o.z;
+    const v = toLocal(dx, dz, ramp.yaw);
+    const ldx = v.x, ldz = v.z;
+    const denom = dy - slope * ldz;
     if (Math.abs(denom) < 1e-9) { continue; }
-    const dist = (ramp.y0 - slope * (oz - startZ) - oy) / denom;
+    const dist = (ramp.y0 + slope * (loz + ramp.hz) - oy) / denom;
     if (dist <= 0 || dist > best) { continue; }
-    const x = ox + dx * dist;
-    const z = oz + dz * dist;
-    if (Math.abs(x - ramp.x) > ramp.hx || Math.abs(z - ramp.z) > ramp.hz) { continue; }
+    const lx = lox + ldx * dist;
+    const lz = loz + ldz * dist;
+    if (Math.abs(lx) > ramp.hx || Math.abs(lz) > ramp.hz) { continue; }
     best = dist;
     out.dist = dist;
     out.kind = "ramp";
     out.obstacleId = 0;
-    out.x = x; out.y = oy + dy * dist; out.z = z;
+    out.x = ox + dx * dist; out.y = oy + dy * dist; out.z = oz + dz * dist;
     const normalLength = Math.hypot(1, slope);
-    out.nx = 0; out.ny = 1 / normalLength; out.nz = -slope / normalLength;
+    const n = toWorld(0, -slope / normalLength, ramp.yaw);
+    out.nx = n.x; out.ny = 1 / normalLength; out.nz = n.z;
   }
 
   for (const ob of level.obstacles) {

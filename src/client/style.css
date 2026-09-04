@@ -113,6 +113,66 @@ html, body {
   text-transform: uppercase;
 }
 
+/* Ammo and coins. Deliberately next to the section name rather than centred:
+   this is a racer, and the middle of the screen belongs to the course. */
+.kit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.kit[hidden] { display: none; }
+
+.ammo { letter-spacing: 2px; color: var(--warm); }
+.ammo.empty { color: var(--dim); }
+
+.coins::before {
+  content: "";
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: #ffd166;
+  vertical-align: middle;
+}
+.coins { color: #ffd166; font-weight: 700; }
+.coins.spent { color: var(--dim); }
+.coins.shielded { text-shadow: 0 0 10px rgba(110, 231, 255, 0.9); }
+
+.recall { color: #c4b5fd; letter-spacing: 2px; }
+
+/* Who is immediately ahead and behind, and by how much. A player in third with
+   no idea whether they are one second or twenty behind has nothing to fight
+   for; this is the whole fix. */
+.rivals {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rivals[hidden] { display: none; }
+.rival { color: var(--dim); white-space: nowrap; }
+.rival:empty { display: none; }
+.rival .gap { font-family: var(--mono); margin-left: 6px; }
+.rival.ahead .gap { color: var(--warm); }
+.rival.behind .gap { color: var(--good); }
+
+.series {
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.board .bot { color: var(--dim); font-size: 10px; margin-left: 4px; }
+.board .pts { font-family: var(--mono); font-size: 11px; color: var(--warm); margin-left: 6px; }
+.recall.spent { color: var(--dim); }
+
 .clock {
   font-family: var(--mono);
   font-size: 30px;

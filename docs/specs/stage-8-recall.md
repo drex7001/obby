@@ -128,3 +128,67 @@ destination *and* be honest that the world around it will have moved.
 Recalling other players, recalling the world, recalling further than 45 ticks,
 and any charge economy beyond one per segment (coins can buy a recharge — that is
 stage 6's sink, not this spec's).
+
+---
+
+## As built
+
+The ring in [`recall.ts`](../../src/shared/recall.ts), the verb in
+[`movement.ts`](../../src/shared/movement.ts), the per-player histories in
+[`RaceRoom.ts`](../../src/rooms/RaceRoom.ts), the ghost in
+[`course.ts`](../../src/client/render/course.ts), and the gates in
+[`test/stages/recall.test.ts`](../../test/stages/recall.test.ts).
+
+Everything in the acceptance list is covered, and the browser smoke run drives a
+real restore end to end - it arms, freezes and lands with the charge spent.
+
+### The ring is indexed by world tick, not by insertion
+
+This is the one design decision worth writing down. An append-only queue is the
+obvious shape and it is wrong here: a client that rolls back replays twenty
+unacknowledged inputs, and a queue would happily append all twenty a second time
+and remember twice as much past as actually happened. Slots keyed by
+`tick % RECALL_HISTORY`, each remembering which tick it holds, make recording
+**idempotent** - a replay rewrites its own slots with its own values and leaves
+everything else alone. The tick check is also what stops a wrapped-around slot
+being mistaken for a recent one.
+
+Samples older than the replay window were written by the original prediction and
+are never revisited, so a client that mispredicted has a slightly wrong memory
+of where it was. That is exactly what the freeze is for.
+
+### The step is split so the ring cannot get holes in it
+
+`stepPlayer()` has half a dozen early returns - the respawn freeze, the recall
+freeze itself, the voluntary reset, falling out of the world - and a history
+with holes is one a restore silently refuses to use. So the exported
+`stepPlayer` is now a two-line wrapper around `stepCore` that records the sample
+on every path through it. The suite asserts both halves: that the ring is
+continuous across a respawn, and that keeping one does not change the simulation
+it is a history of.
+
+### Three deviations
+
+1. **The context action carries two verbs, split by hold length.** `use` was
+   already Burn as of stage 6, and stage 8 wants it for Recall. A tap burns the
+   purse on the release edge; a four-tick hold fires Recall. The hold was the
+   spec's own guard against firing the recovery verb by accident, so using it as
+   the discriminator costs nothing and leaves the stage-0 input packet exactly
+   as stage 0 settled it. Burn moving from the press edge to the release edge
+   delays it by at most three ticks.
+2. **"Within 20 ticks of the finish" is enforced as a distance.** As written it
+   cannot be evaluated without knowing the future. `RECALL_FINISH_GUARD` is
+   twenty ticks of running - seven units - measured against the finish volume,
+   which is the same statement made about something the level already knows.
+3. **A restore does not zero velocity during the freeze.** What is restored is a
+   *moment*, and a moment includes how fast the runner was going. Freezing
+   position while keeping velocity is what makes "the platform you were standing
+   on has moved on" resolve as an ordinary fall when control returns, rather
+   than needing a special case.
+
+### The coin recharge landed here rather than in stage 6
+
+Stage 6's sink table lists a Recall recharge at 12 coins, and stage 6 could not
+ship it because there was nothing to recharge. It is a `buy` message like the
+other two, capped at `RECALL_MAX_CHARGES`, and it stacks on top of the charge a
+checkpoint hands back rather than replacing it.

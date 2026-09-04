@@ -9,7 +9,7 @@
  * and cutting a corner never gains you any.
  */
 
-import type { Level } from "./level.js";
+import type { Level, Vec3 } from "./level.js";
 
 /**
  * Fraction of the course completed at (x, z), as arc length along the
@@ -36,6 +36,28 @@ export function pathProgress(level: Level, x: number, z: number): number {
   }
   const p = bestDist / level.pathLength;
   return p < 0 ? 0 : p > 1 ? 1 : p;
+}
+
+/**
+ * The point `distance` units along the centre-line.
+ *
+ * The centre-line doubles as a navmesh: it is already the thing race position
+ * is scored on, it already turns with the course, and a runner following it is
+ * by construction taking the route the generator laid out.
+ */
+export function pointOnPath(level: Level, distance: number, out: Vec3): Vec3 {
+  const path = level.path;
+  const cum = level.pathCum;
+  const want = distance < 0 ? 0 : distance > level.pathLength ? level.pathLength : distance;
+
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < want) { i++; }
+  const span = cum[i] - cum[i - 1];
+  const t = span > 1e-9 ? (want - cum[i - 1]) / span : 0;
+  out.x = path[i - 1].x + (path[i].x - path[i - 1].x) * t;
+  out.y = path[i - 1].y + (path[i].y - path[i - 1].y) * t;
+  out.z = path[i - 1].z + (path[i].z - path[i - 1].z) * t;
+  return out;
 }
 
 /** Progress value banked by reaching checkpoint `index` (-1 for none). */

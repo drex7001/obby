@@ -15,9 +15,11 @@ explicit as rules:
    synced integers)`.** No clocks, no `Math.random()`, no ambient state, no
    renderer.
 2. **Randomness enters the world exactly once**, through `mulberry32(seed)`
-   inside [buildLevel()](../src/shared/level.ts). A mechanic that needs a random
-   number at runtime needs redesigning — draw its numbers at build time and
-   index them by tick.
+   inside [buildLevel()](../src/shared/generator.ts). A mechanic that needs a
+   random number at runtime needs redesigning — draw its numbers at build time
+   and index them by tick. Since stage 4 that one stream is shared by seven
+   section builders in sequence, so a section that draws a *variable* number of
+   values shifts every section after it: draw them all at the top of `build()`.
 3. **Anything the simulation reads lives in [src/shared/](../src/shared/).** A
    raycast used by the simulation may not use Babylon's scene picking; it uses
    [rayBoxDistance()](../src/shared/collision.ts#L321) against the same `Level`
@@ -149,14 +151,34 @@ be nudged by it.
 | --- | --- | --- |
 | Input packet | 12 bytes | ~6 (`int8`, `int8`, `angle`, 2 × `bool`) |
 | Per-player simulated fields | 24 bytes/tick on the wire | ~16 changing per tick |
-| Room tick-stamp integers | 64 × `int32` per round | 5 crumble + 2 plate arrays |
+| Room tick-stamp integers | 64 × `int32` per round | ≤ 12 crumble + ≤ 2 plate arrays |
 | Class C entities per room | 12 | 6 (the players) |
-| `buildLevel()` wall time | 4 ms | well under |
+| `buildLevel()` wall time | 4 ms | ~0.06 ms |
 
 **Quantise freely.** The `t.angle()` precedent in
 [RaceState.ts](../src/rooms/schema/RaceState.ts#L18) establishes that a lossy
 field is safe for prediction *because the reconciler replays the decoded value*.
 A `uint8` chain meter scaled 0–255 costs one byte and cannot desync.
+
+**Quantise an accumulator at your peril.** The counter-example is the tether's
+`tension`, which the stage-7 spec asked to be a `uint8`. It is integrated per
+sub-step, and rounding it into a byte on each of those either loses the whole
+gain or needs a scale so coarse the release stops being readable. The precedent
+above holds for a value that is *transmitted*; it does not hold for one that is
+*accumulated*.
+
+**`Player` has 63 fields, and that is a hard ceiling.** Colyseus refuses the
+64th. It is close enough now to be a design input rather than a detail: stage 10
+paid for splits by moving the previous round's reference onto the room, and
+stage 11's Relay mode is blocked on it. Before adding a field, check whether the
+thing being described is really a property of a *person* or of the *round*.
+
+**Anything a mutator varies lives on the `Level`, never in `constants.ts`.** A
+constant exists twice — once on the server, once compiled into the client — so
+changing one of them is a desync with no symptom until somebody falls through
+the floor. `Level.tuning` is the place, and a test greps
+[movement.ts](../src/shared/movement.ts) for the migrated names to keep it that
+way.
 
 ---
 

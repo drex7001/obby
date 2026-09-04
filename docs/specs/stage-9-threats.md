@@ -224,3 +224,90 @@ and the ray is plausible from the shooter's authoritative position.
    where the character comes from, and it is worth more than a second creature.
 3. **Enable `allowRewindState`** and wire shooting enemies.
 4. **Tier 2: Bulwark**, only if a *solid* enemy is what is missing.
+
+---
+
+## As built
+
+Watcher kinematics in [`obstacles.ts`](../../src/shared/obstacles.ts), the
+committed-arc model in [`enemies.ts`](../../src/shared/enemies.ts), the AI in
+[`threats.ts`](../../src/rooms/threats.ts), the collision and shot integration
+in [`movement.ts`](../../src/shared/movement.ts) and
+[`salvo.ts`](../../src/shared/salvo.ts), the meshes in
+[`render/threats.ts`](../../src/client/render/threats.ts), and the gates in
+[`test/stages/threats.test.ts`](../../test/stages/threats.test.ts).
+
+All four build-order steps shipped, including tier 2. Every Watcher in the table
+exists and has a home in the pool: the Watchtower carries the sentry, the hunter
+and a turret; the Works carries the jaws and a nest; the Gallery carries the
+turret whose shells you shoot down; the Sieve carries the swarm.
+
+### The one deviation that changes the shape of the stage
+
+**Both tiers run on tier 2's mechanism, and `allowRewindState` is deliberately
+unused.**
+
+Lag compensation is available - `Room.allowRewindState()` and `lastSeenBy()` are
+both there in this project's Colyseus - so this is a choice rather than a
+workaround. The choice is to make every enemy, hazard or solid, publish a
+**committed arc** rather than a position, and to have both ends compute the pose
+with `enemyPoseAt()`. The spec argues the case itself, in its own tier-2
+section: *"a position that can be recomputed never has to be remembered."*
+
+Tier 2 needs that machinery regardless, since rewind reconstructs the past and
+prediction needs the future. Once it exists, using rewind for tier 1 as well
+would mean maintaining two answers to one question. Three consequences:
+
+- **Shooting an enemy needs no compensation at all.** The shooter and the server
+  evaluate the same arc at the same tick and cannot disagree, so the documented
+  footgun - "the timeline mode must match what the client displays" - is
+  *removed* rather than mitigated. There is no mode to mismatch.
+- **The tiers stay meaningfully different.** `solid` is a property of the kind,
+  not of the netcode: a Shambler and a Lurcher are never surfaces, and a Bulwark
+  is. The safety argument the spec makes survives intact, because it was never
+  really about dead reckoning - it was about a wrong guess costing centimetres
+  versus metres.
+- **Enemies cost more bytes than tier 1 would have, and fewer than it looks.** A
+  commit is fourteen numbers, published about once a second per enemy and only
+  when the AI decides something; an enemy walking a straight line encodes
+  nothing at all between commits.
+
+### The enemy collection is a map, and that is not a preference
+
+`t.array(Enemy)` looked right and was wrong. An `ArraySchema` of child schemas
+shifts every index when an entry is removed, and a client decoding a patch while
+a nest's brood despawns drops a reference it still holds - `DecodingWarning:
+trying to remove refId with 0 refCount`, on a real client, in an ordinary round.
+Keyed by enemy id instead, an enemy leaving is one deletion and nothing else
+moves.
+
+### Two smaller ones
+
+1. **Placed enemies are level content, spawned ones are not.** A nest emits
+   Shamblers on a schedule, as specified. But a Lurcher waiting on the
+   Watchtower's flank, or a Bulwark parked across a lane in the Works, is a
+   *placement* authored against the geometry around it, so sections emit them
+   through `ctx.enemy()` and the level carries a `spawns` list.
+2. **Turret shells get their own stamp array, not a breaker slot.** Reusing
+   `breakerTicks` would have meant a shot destroying the turret rather than the
+   round in the air. `shellTicks` is re-stamped on every hit and scoped to the
+   firing cycle the stamp falls in, so the next shell fires as normal - which is
+   what keeps a shootable effect temporary in the sense stage 6's Risk 1 means.
+
+### The commit lead, and why it reads well
+
+A commit is published `COMMIT_LEAD` ticks (half a second) before it takes
+effect, so nobody ever evaluates a path they have not received. The spec
+predicts that this caps reactivity at half a second and that the result reads as
+something heavy that telegraphs and follows through, and that is exactly how it
+plays: a Lurcher's wind-up is on screen before the lunge it belongs to has
+started, because the *action* is published with the arc.
+
+### Where it stands against the acceptance list
+
+Everything is covered by the suite except two items. "The bot sweep completes
+courses containing every threat kind" needs the runner that arrives with stage
+10. And "players attach `snapshot`, enemies `reckon`" does not apply to what was
+built - there is no rewind configured to mismatch. The test that replaces it
+asserts the property the acceptance item was protecting: a shot at a moving
+enemy resolves to the same answer on both ends, with no compensation at all.

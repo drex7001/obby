@@ -85,6 +85,50 @@ export const Player = schema({
   /** Ticks remaining after standing in which a carve hop can fire. */
   hopWindow: t.number().default(0),
 
+  // ---- simulated: the salvo ----------------------------------------------
+  /** Shots in the magazine. Class A: predicted and reconciled like position. */
+  ammo: t.uint8().default(0),
+  /** World tick the next shot is allowed, or -1 when cold. */
+  fireCool: t.int32().default(-1),
+  /** Held state of the primary action; the firing edge is found in the step. */
+  actionHeld: t.boolean().default(false),
+  /** Held state of the context action; the spending edge likewise. */
+  useHeld: t.boolean().default(false),
+  /** Slot+1 of the pickup being stood in, 0 for none. Stops re-collection. */
+  pickupIn: t.uint8().default(0),
+  /** Server-stamped coin spend, applied by the buyer's own deterministic step. */
+  burnTick: t.int32().default(-1),
+  burnAmount: t.uint8().default(0),
+  /** World tick a bought Chain shield expires, or -1 when unarmed. */
+  shieldUntil: t.int32().default(-1),
+
+  // ---- simulated: the tether ----------------------------------------------
+  /** Attached anchor id + 1, or 0 when detached. */
+  anchorId: t.int16().default(0),
+  /** Rope length, fixed at attach time. */
+  ropeLen: t.number().default(0),
+  /**
+   * Swing tension banked so far.
+   *
+   * A full number, not the spec's quantised uint8. The accumulator integrates
+   * per sub-step; rounding it into a byte on each one either loses the whole
+   * gain or needs a scale so coarse the release stops being readable, and a
+   * field the two ends can round differently is a desync, not a saving.
+   */
+  tension: t.number().default(0),
+  /** World tick a new attach is allowed, or -1 when cold. */
+  tetherCool: t.int32().default(-1),
+  /** World tick the current swing is force-released, or -1 when detached. */
+  tetherUntil: t.int32().default(-1),
+
+  // ---- simulated: recall --------------------------------------------------
+  /** Restores in hand: one per checkpoint segment, plus any bought with coins. */
+  recallCharges: t.uint8().default(1),
+  /** World tick the recall freeze ends, or -1 when not frozen. */
+  recallUntil: t.int32().default(-1),
+  /** Ticks the context action has been held, for the four-tick arm. */
+  recallHeld: t.number().default(0),
+
   // ---- server-stamped, victim-simulated impulses -------------------------
   knockTick: t.int32().default(-1),
   knockX: t.number().default(0),
@@ -102,6 +146,31 @@ export const Player = schema({
    * says whether it has been assigned.
    */
   tickBase: t.int32().default(0),
+  /**
+   * Banked coins. Class D: server-owned, never predicted.
+   *
+   * The client may show an optimistic award and take the correction, because a
+   * coin count that snaps is a cosmetic annoyance whereas a coin count the
+   * client can decide is an exploit.
+   */
+  coins: t.uint8().default(0),
+  /** Breakers this player has shot. Presentation and end-of-round interest. */
+  breaks: t.uint16().default(0),
+
+  // ---- the series ---------------------------------------------------------
+  /** Points banked across the series so far. */
+  seriesPoints: t.uint16().default(0),
+  /**
+   * Milliseconds from the start gate to each checkpoint, 0 for "not reached".
+   *
+   * Not predicted: a split is a fact about the past, and the one thing it must
+   * never do is snap. See stage 10.2.
+   */
+  splits: t.array("uint32"),
+  /** True for a bot. The client needs it only to mark the nameplate. */
+  bot: t.boolean().default(false),
+  /** Influence charges. One per race, spent only once finished or out. */
+  influence: t.uint8().default(1),
   /** 1-based race position. 0 until the first ranking pass runs. */
   rank: t.uint8().default(0),
   finished: t.boolean().default(false),
@@ -111,6 +180,40 @@ export const Player = schema({
   falls: t.uint16().default(0),
 }, "Player");
 export type Player = SchemaType<typeof Player>;
+
+/**
+ * One enemy, as a **committed arc** rather than a position.
+ *
+ * Publishing where something is going, instead of where it is, is what lets a
+ * predicting client collide with it at ticks the server has not simulated yet -
+ * and what lets a shot at one resolve with no lag compensation at all. The
+ * fields below are exactly what `enemyPoseAt()` needs and nothing else.
+ */
+export const Enemy = schema({
+  id: t.uint16().default(0),
+  /** 0 Shambler, 1 Lurcher, 2 Bulwark. */
+  kind: t.uint8().default(0),
+  alive: t.boolean().default(true),
+  hp: t.uint8().default(1),
+  /** Tick a downed enemy is cleared away, or -1. */
+  downUntil: t.int32().default(-1),
+  /** 0 idle, 1 walk, 2 wind-up, 3 lunge, 4 recover. Presentation only. */
+  action: t.uint8().default(0),
+
+  /** The arc. Always published to take effect in the future - see threats.ts. */
+  fromTick: t.int32().default(-1),
+  toTick: t.int32().default(-1),
+  x0: t.number().default(0),
+  y0: t.number().default(0),
+  z0: t.number().default(0),
+  /** Initial heading, as a unit vector in the simulation's (sin, cos) frame. */
+  dx: t.number().default(0),
+  dz: t.number().default(1),
+  speed: t.number().default(0),
+  /** Turn rate along the arc, rad/s. An arc without control points. */
+  turn: t.number().default(0),
+}, "Enemy");
+export type Enemy = SchemaType<typeof Enemy>;
 
 export type RacePhase = "waiting" | "countdown" | "racing" | "results";
 
@@ -141,10 +244,62 @@ export const RaceState = schema({
   plateTicks: t.array("int32"),
   /** Per plate: the tick it most recently switched on, or -1. */
   plateSince: t.array("int32"),
+  /** Per breaker slot: the tick it was shot, or -1. */
+  breakerTicks: t.array("int32"),
+  /** Per pickup slot: the tick it was last taken, or -1. */
+  pickupTicks: t.array("int32"),
+  /** Per shootable-shell slot: the tick a shell was shot out of the air. */
+  shellTicks: t.array("int32"),
   /** Ticks a plate stays hot - lets clients reconstruct the swing-in ramp. */
   plateHoldTicks: t.int32().default(0),
 
   finishers: t.uint8().default(0),
+
+  // ---- the series ---------------------------------------------------------
+  /** 0-based round within the current series. */
+  seriesRound: t.uint8().default(0),
+  seriesLength: t.uint8().default(0),
+  /** sessionId of the series winner, or "" while it is still live. */
+  seriesWinner: t.string().default(""),
+
+  // ---- variation ----------------------------------------------------------
+  /**
+   * This round's mutators, comma-separated.
+   *
+   * On the wire rather than derived from the seed, because a mode may force or
+   * forbid part of the deck - and because one small string is a cheaper way to
+   * agree than two implementations of the same draw rule.
+   */
+  mutators: t.string().default(""),
+  /** @see RaceMode */
+  mode: t.string().default("race"),
+  /** Survival: the closing kill plane, as course progress. -1 when idle. */
+  killLine: t.number().default(-1),
+  /** Hunt: sessionId of the runner everybody else is chasing. */
+  hare: t.string().default(""),
+  /** Best time to each checkpoint this round, in ms. 0 until somebody gets there. */
+  bestSplits: t.array("uint32"),
+  /**
+   * The same, from the previous round.
+   *
+   * A leader has nobody ahead of them to measure against, so they are measured
+   * against the round before - and one array on the room says that as well as
+   * one per player would, for a sixth of the fields. `Player` is within a
+   * couple of entries of Colyseus' 63-field ceiling, and a split is a fact
+   * about the course rather than about a person.
+   */
+  prevBestSplits: t.array("uint32"),
+
+  /**
+   * The live enemy field, keyed by enemy id. Capped at ENEMY_MAX.
+   *
+   * A map rather than an array, and not for taste: an `ArraySchema` of child
+   * schemas shifts every index when an entry is removed, and a decoder that is
+   * mid-patch when a nest's brood despawns drops a reference it still holds -
+   * `trying to remove refId with 0 refCount` on a real client. Map keys never
+   * shift, so an enemy leaving is one deletion and nothing else moves.
+   */
+  enemies: t.map(Enemy),
 
   players: t.map(Player),
 }, "RaceState");

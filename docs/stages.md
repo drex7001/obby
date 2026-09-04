@@ -5,11 +5,44 @@ one before it.** You can stop after any of them and have something coherent.
 
 ## Current implementation status
 
-Stages 0–3 have their specified systems implemented and automated coverage for
-their deterministic behavior. The remaining acceptance work is intentionally
-manual: Stage 1 still needs its twenty-round momentum feel pass, and Stage 2
-still needs a focused landing-feel playtest. The table therefore records
-implementation status, not a claim that every playtest gate has been signed off.
+All twelve stages have their specified systems implemented and automated
+coverage for their deterministic behavior. The remaining acceptance work is intentionally
+manual or blocked on a later stage: Stage 1 still needs its twenty-round
+momentum feel pass, Stage 2 still needs a focused landing-feel playtest, the two
+completability gates in Stage 5 need the scripted runner that arrives with Stage
+10, and the "completable with the gun disabled" and "completable with the tether
+disabled" gates in Stages 6 and 7 need the same sweep — which now exists, and
+does not yet pass. Stage 7 carries a genuine playtest gate, the prototype gate,
+which no test can sign off, and Stage 10's interference section carries another.
+The table records implementation status, not a claim that every playtest gate
+has been signed off.
+
+**The one number worth knowing.** The stage-10 bot sweep completes **48% of
+courses at hard** against a specified bar of 95%.
+
+A low number here does *not* by itself mean the game is broken, and it is worth
+being precise about which is which. Three of the sections the sweep flags have
+been taken apart by hand since:
+
+| Section | Verdict |
+| --- | --- |
+| **The Chasm** | **A real bug, now fixed.** It was not completable by anybody — best possible swing 27 u against a 26–34 u gap, and no anchor was inside the camera's look-up range. See the stage-7 notes |
+| **The Works** | Bot only. Its doors are 8 u wide on a track 39 u across, leaving 15.6 u clear each side, and the bridge plate holds for 8 s against a 2.4 s run |
+| **Pendulum Pass** | Bot only. A narrow deck with heads on a 2.4–3.1 s cycle. Hard on purpose, and the timing windows are there |
+
+The bot's remaining failures are its own navigation, not the course. Everything structural about
+bots shipped — a bot is an input channel and nothing in `src/shared` knows one
+exists — but the navigation is not good enough yet, and the completability gates
+in stages 5, 6, 7 and 11 stay open until it is. `npm run sweep` reports the
+per-section rates, which is the constraint the pool is now measured against.
+
+**What is deliberately not built.** Three items, each gated by its own spec
+rather than by effort: Stage 10's committed traps and co-op gate (behind that
+spec's "playtest, then decide whether anything else is needed"), Stage 11's
+Relay mode (last in its own build-by-cost order, and blocked on a schema-field
+trade that should be a deliberate decision), and Stage 11's progression and
+Arena (both explicitly gated on things no implementation can answer — a database
+and an auth story for one, a design call for the other).
 
 | Stage | Status | Delivered systems | Primary coverage |
 | --- | --- | --- | --- |
@@ -17,6 +50,14 @@ implementation status, not a claim that every playtest gate has been signed off.
 | 1 · Momentum | Implemented | 90 Hz collision, falloff acceleration, directional targets, slope acceleration, overspeed decay | `test/stages/momentum.test.ts` |
 | 2 · Impact and Chain | Implemented | Perfect/neutral/fumble/Heavy landings, Chain, server-stamped victim impulses, Heavy plates and crumble triggers | `test/stages/impact-chain.test.ts` |
 | 3 · Carve | Implemented | Variable capsule height, stand-up clearance, dive, hop window, raised Gauntlet bar, Chain-scaled air control | `test/stages/carve.test.ts`; Stage 3 browser smoke |
+| 4 · The course generator | Implemented | Turning cursor, arc warp, section registry, weighted selection, yawed ramps and trigger volumes, generated checkpoint banks | `test/stages/generator.test.ts` |
+| 5 · The section pool | Implemented | Fourteen sections — six revised, eight new — against one authored contract | `test/stages/sections.test.ts` |
+| 6 · The Salvo | Implemented | Gun pickup and magazine, deterministic shot resolution with assist, five breaker effects, coins, Burn and the Chain shield | `test/stages/salvo.test.ts` |
+| 7 · Tether | Implemented | Deterministic anchor targeting, the swing constraint, the tension accumulator, and a closed-form arc-bottom release window | `test/stages/tether.test.ts` |
+| 8 · Recall | Implemented | Tick-indexed history ring, the restore, the freeze that doubles as the confirmation window, the destination ghost | `test/stages/recall.test.ts` |
+| 9 · Threats | Implemented | Six Watchers as pure functions of tick, shootable shells, and enemies on committed arcs — hazard and solid | `test/stages/threats.test.ts` |
+| 10 · The race around the race | Implemented, with one gap | Series scoring, splits and rivals, bots and the headless sweep, self-verifying replays, slipstream, the contested plate, spectator influence | `test/stages/meta.test.ts` |
+| 11 · Variation | Implemented, less Relay | Tuning migrated onto the level, twelve mutators, and four modes — time attack, Collect, Survival, Hunt | `test/stages/variation.test.ts` |
 
 `npm test` runs all suites, and `SMOKE_STAGE3_ONLY=1 npm run smoke` drives two
 real clients through entering Carve and landing a carve hop.
@@ -24,7 +65,40 @@ real clients through entering Carve and landing a carve hop.
 The packet contract is normalized in
 [`src/shared/input.ts`](../src/shared/input.ts), reusable simulation fixtures
 live under [`test/helpers/`](../test/helpers/), and stage-specific behavior is
-grouped by feature under [`test/stages/`](../test/stages/).
+grouped by feature under [`test/stages/`](../test/stages/). The course is
+assembled by [`src/shared/generator.ts`](../src/shared/generator.ts) from the
+sections under [`src/shared/sections/`](../src/shared/sections/);
+[`src/shared/level.ts`](../src/shared/level.ts) is now only the shapes those two
+agree on.
+
+### Where stages 4 and 5 depart from their specs
+
+Four deliberate deviations, each because the spec as written dead-ends:
+
+1. **Sections are joined by a generated bank, not by matching gate widths.** The
+   pool has exactly one narrow entry (Pendulum Pass) and exactly one narrow exit
+   (the Chasm), and the Chasm is held out whenever the tether is disabled — so
+   strict width matching makes Pendulum Pass unreachable. The 4 u bank the
+   generator drops at every join is also where the checkpoint lives, which
+   removes the same code from fourteen section files.
+2. **`Volume` carries a yaw** instead of banks being confined to straight
+   segments. It costs ten lines, and it also fixes the Works' pressure plate,
+   which the straight-segment rule would not have.
+3. **A bank is as wide as the ground either side of it** (20–28 u), not the
+   spec's fixed 16–24. Sections build wider than the gates they declare — the
+   Gauntlet's 26 u track is the whole point of that section — and a bank sized
+   from the declared gate is a hole where the fast line meets it.
+4. **Difficulty pacing is "no two 4s adjacent, no three hard sections in a row"**
+   rather than "no two difficulty ≥ 3 adjacent". Nine of the ten middles are
+   tagged 3 or 4 and the Climb is a 3; the spec's rule has no solution.
+5. **Turnstile and Sieve are tagged difficulty 2**, and Turnstile can also be the
+   rest beat. With one difficulty-2 middle in the pool the pacing rule forced the
+   Spiral into every single course.
+
+One known content gap, not a bug: the Spiral still appears in roughly three
+quarters of courses, because it is the only section that climbs and the pool has
+few soft middles. The cheapest fix is another difficulty-2 middle, and that is
+authoring work rather than generator work.
 
 ---
 
@@ -62,12 +136,34 @@ The clearest way to see that the stages are additive.
 | 3 | — | carve state | — |
 | 4 | — | — | — |
 | 5 | — | — | — |
+
+Stage 4 does add three level *fields* — `Ramp.yaw`, `Volume.yaw` and
+`Obstacle.baseYaw` — but the level is not networked: both ends rebuild it from
+the seed, so none of it crosses the wire. Stage 6 adds `Pickup`, a `slot` on
+every `Breaker`, and the `collapse` and `seal` obstacle kinds on the same terms.
+
+Stage 6's real wire cost is `ammo`, `fireCool`, two held-input flags, `pickupIn`,
+the Burn stamp and `shieldUntil` on the player, plus two int32 arrays on the
+room — about two bytes per tick per player, and a stamp on the rare tick
+something breaks. Stage 7 adds five more player fields and nothing else: anchors
+are level data, and targeting is a pure function of the aim ray.
+
+Stage 8 adds three player fields and nothing else. Its history ring is per
+player, kept by both ends, and synchronised by neither — what crosses the wire is
+the *result* of a restore, which is ordinary simulated state the reconciler
+already handles.
+
+The input packet is still exactly what stage 0 settled. Two bits now carry two
+verbs each, and in both cases the discriminator is something the design already
+wanted: `action` tethers when an anchor is inside the targeting cone and fires
+otherwise, and `use` burns on a tap and recalls on a four-tick hold — the hold
+being the accident guard Recall's spec asked for anyway.
 | 6 | — | ammo, coins | breaker + pickup stamps |
 | 7 | — | tether anchor, length | — |
 | 8 | — | recall stamps | — |
-| 9 | — | — | enemy collection |
-| 10 | — | series points, splits | series state |
-| 11 | — | — | mutator id |
+| 9 | — | — | enemy collection, shell stamps |
+| 10 | — | series points, splits, influence, bot flag | series state, best splits |
+| 11 | — | — | mutator list, mode, kill line, hare |
 
 Nothing is ever taken away. The input packet is settled in stage 0 and never
 touched again.

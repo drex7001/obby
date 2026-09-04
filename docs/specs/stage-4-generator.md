@@ -151,3 +151,69 @@ a different space. Determinism is the invariant, not any particular course.
 | A section draws a variable number of randoms | Review checklist; draw up front |
 | An impossible course ships | Bot completability sweep in CI |
 | Crumble slot mapping breaks | Allocator owns slots; assert `crumbleCount` equals the number of crumble obstacles |
+
+---
+
+## As built
+
+Machinery in [`generator.ts`](../../src/shared/generator.ts), the contract in
+[`sections/types.ts`](../../src/shared/sections/types.ts), the emitter in
+[`sections/build.ts`](../../src/shared/sections/build.ts), and the gates in
+[`test/stages/generator.test.ts`](../../test/stages/generator.test.ts).
+`level.ts` is now only the shapes both sides agree on, which is what keeps the
+section files free of an import cycle back into it.
+
+**A section is bent, not authored bent.** Rather than each turning section
+emitting an arc, the assembler warps every point it emits onto a constant-radius
+arc — `turn` radians over `length` units gives radius `length / turn`, and a
+straight section is the degenerate case. A section therefore contains course
+design and no coordinates that depend on where it lands. The cost is that a
+turning section has to emit its track in chunks (`ctx.track`, `ctx.rail`), since
+one long slab would come out as a chord; a straight section still emits one slab
+and pays nothing.
+
+**The turn direction is a decision, not just a draw.** The seed picks a sign,
+then two rules can veto it: the course may not wind past a half turn
+cumulatively, and a bend that would bring the course back within 26 u of track
+already laid is flipped. Running straight is always the third option, and it is
+exactly the shape every earlier turn was judged against — which is what makes
+the guarantee hold rather than merely usually hold. Measured over 600 seeds the
+worst approach between two points 70 u apart along the course is 28 u.
+
+### Four deviations, each because the spec dead-ends
+
+1. **Sections are joined by a generated bank rather than by matching gate
+   widths.** The pool has exactly one narrow entry and exactly one narrow exit,
+   and the narrow exit is the Chasm, which is held out whenever the tether is
+   disabled — so strict width matching makes Pendulum Pass unreachable. The 4 u
+   bank the assembler drops at every join is 20 u wide, hazard-free, and carries
+   the checkpoint, which also removes that code from fourteen section files.
+2. **`Volume` carries a yaw**, rather than banks being confined to straight
+   segments. Ten lines, and it fixes the Works' pressure plate too, which the
+   straight-segment rule would not have.
+3. **A bank is sized from the ground either side of it, not from the declared
+   gate.** A gate width is one of three values; real track is whatever the
+   section wanted. The Gauntlet builds 26 u because its unswept outer lane is
+   the point of the section, and a bank sized from its declared 22 u gate is a
+   two-metre hole on each side exactly where the fast line arrives. Banks
+   therefore run 20-28 u rather than the spec's 16-24; a bank narrower than the
+   track feeding it is not a bank. `gateSpan()` measures it, and the banks are
+   emitted in a second pass because sizing one needs the section on *both*
+   sides of it.
+4. **Difficulty pacing is "never two 4s adjacent, never three hard sections in a
+   row"**, not "no two difficulty ≥ 3 adjacent". Nine of the ten middles are
+   tagged 3 or 4 and the Climb is a 3, so the spec's rule has no solution.
+5. **Elevation outranks pacing** when the two constraints disagree. A course
+   that does not net out ends 8 u off its own datum, which is broken; one hard
+   section too many in a row is only worse.
+
+`Obstacle.baseYaw` is the one addition the warp forced on the simulation:
+`poseAt()` adds it for every kind, because on a bent section it is the
+difference between a door lying along the track and lying across it.
+
+### Where it stands against the acceptance list
+
+Every item is covered by `test/stages/generator.test.ts` except
+"completable using only its declared verbs", which needs the scripted runner
+that arrives with stage 10 and is tracked there. `buildLevel()` p95 is about
+0.06 ms against a 4 ms budget.

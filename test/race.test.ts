@@ -1,17 +1,34 @@
 import assert from "assert";
-import { boot, ColyseusTestServer } from "@colyseus/testing";
+import type { ColyseusTestServer } from "@colyseus/testing";
 
-import appConfig from "../src/app.config.js";
+import type appConfig from "../src/app.config.js";
+import { useTestServer } from "./helpers/server.js";
 import type { RaceInput, RaceState } from "../src/rooms/schema/RaceState.js";
-import { buildLevel } from "../src/shared/level.js";
+import { buildLevel, buildLevelWith } from "../src/shared/level.js";
+
+/**
+ * The course the room is actually running.
+ *
+ * A round's mutators are published rather than derived, so rebuilding from the
+ * seed alone is rebuilding a different course - which is exactly the mistake a
+ * client would make, and exactly why the mutators are on the wire.
+ */
+const courseOf = (room: any) =>
+  buildLevelWith(room.state.seed, {
+    mutators: room.state.mutators ? String(room.state.mutators).split(",") : [],
+  });
+import { pathProgress } from "../src/shared/progress.js";
 import { makePose, poseAt, type WorldPhase } from "../src/shared/obstacles.js";
 import { RUN_SPEED, TICK_RATE } from "../src/shared/constants.js";
 
 const idlePhase: WorldPhase = {
   raceStartTick: -1,
-  crumbleTicks: [-1, -1, -1, -1, -1],
-  plateTicks: [-1],
-  plateSince: [-1],
+  crumbleTicks: new Array(32).fill(-1),
+  plateTicks: new Array(8).fill(-1),
+  plateSince: new Array(8).fill(-1),
+  breakerTicks: new Array(16).fill(-1),
+  pickupTicks: new Array(8).fill(-1),
+  shellTicks: new Array(8).fill(-1),
 };
 
 describe("course determinism", () => {
@@ -41,21 +58,27 @@ describe("course determinism", () => {
   });
 
   it("keeps every checkpoint reachable along the progress path", () => {
-    const level = buildLevel(7);
-    let last = -1;
-    for (const cp of level.checkpoints) {
-      assert.ok(cp.spawn.z > last, "checkpoints must advance down the course");
-      last = cp.spawn.z;
+    // A course turns now, so "further along" is arc length on the centre-line,
+    // not a larger Z. Progress is what the race actually ranks on.
+    for (const seed of [7, 71, 713]) {
+      const level = buildLevel(seed);
+      let last = -1;
+      for (const cp of level.checkpoints) {
+        const at = pathProgress(level, cp.spawn.x, cp.spawn.z);
+        assert.ok(at > last,
+          `seed ${seed}: checkpoint ${cp.index} (${at}) must advance past ${last}`);
+        last = at;
+      }
+      assert.ok(pathProgress(level, level.finish.x, level.finish.z) >= last,
+        `seed ${seed}: the finish is past the last checkpoint`);
     }
-    assert.ok(level.finish.z > last, "the finish is past the last checkpoint");
   });
 });
 
 describe("RaceRoom", () => {
   let colyseus: ColyseusTestServer<typeof appConfig>;
 
-  before(async () => { colyseus = await boot(appConfig); });
-  after(async () => { await colyseus.shutdown(); });
+  before(async () => { colyseus = await useTestServer(); });
   beforeEach(async () => { await colyseus.cleanup(); });
 
   it("spawns a player in the lobby and holds the match in waiting", async () => {
@@ -130,7 +153,7 @@ describe("RaceRoom", () => {
     await colyseus.connectTo(room);
     await room.waitForNextTimestep();
 
-    const level = buildLevel(room.state.seed);
+    const level = courseOf(room);
     const gate = level.obstacles.find((o) => o.kind === "startgate")!;
     const before = poseAt(gate, 0, { ...idlePhase, raceStartTick: -1 }, makePose());
     const after = poseAt(gate, 100, { ...idlePhase, raceStartTick: 50 }, makePose());
@@ -150,7 +173,7 @@ describe("RaceRoom", () => {
   }
 
   function placeAtFinish(room: any, sessionId: string, checkpoint: number) {
-    const level = buildLevel(room.state.seed);
+    const level = courseOf(room);
     const player = room.state.players.get(sessionId);
     player.checkpoint = checkpoint;
     player.x = level.finish.x;
@@ -165,7 +188,7 @@ describe("RaceRoom", () => {
     const c2 = await colyseus.connectTo(room);
     await startRacing(room);
 
-    const level = buildLevel(room.state.seed);
+    const level = courseOf(room);
     const last = level.checkpoints.length - 1;
 
     // Standing on the finish line having skipped the course is not a finish.
@@ -187,7 +210,7 @@ describe("RaceRoom", () => {
     const c3 = await colyseus.connectTo(room);
     await startRacing(room);
 
-    const level = buildLevel(room.state.seed);
+    const level = courseOf(room);
     const home = placeAtFinish(room as any, c3.sessionId, level.checkpoints.length - 1);
     await room.waitForNextTimestep();
 
@@ -208,7 +231,7 @@ describe("RaceRoom", () => {
     const c2 = await colyseus.connectTo(room);
     await startRacing(room);
 
-    const level = buildLevel(room.state.seed);
+    const level = courseOf(room);
     const last = level.checkpoints.length - 1;
     placeAtFinish(room as any, c1.sessionId, last);
     placeAtFinish(room as any, c2.sessionId, last);
@@ -235,13 +258,31 @@ describe("RaceRoom", () => {
     }
   });
 
+  it("ends immediately when a human wins a bots-only field", async () => {
+    const room = await colyseus.createRoom<RaceState>("race", {});
+    const human = await colyseus.connectTo(room);
+    (room as any).addBot(room.state.tick);
+    (room as any).addBot(room.state.tick);
+    await startRacing(room);
+
+    placeAtFinish(room as any, human.sessionId, courseOf(room).checkpoints.length - 1);
+    await room.waitForNextTimestep();
+
+    assert.strictEqual(room.state.phase, "results",
+      "the human winner should not wait for bot opponents to finish");
+    assert.strictEqual(room.state.players.get(human.sessionId).finished, true);
+    for (const [, player] of room.state.players) {
+      if (player.bot) { assert.strictEqual(player.dnf, true, "bots are retired with the round"); }
+    }
+  });
+
   it("marks anyone still running as a DNF when the race is called", async () => {
     const room = await colyseus.createRoom<RaceState>("race", {});
     const c1 = await colyseus.connectTo(room);
     await colyseus.connectTo(room);
     await startRacing(room);
 
-    placeAtFinish(room as any, c1.sessionId, buildLevel(room.state.seed).checkpoints.length - 1);
+    placeAtFinish(room as any, c1.sessionId, courseOf(room).checkpoints.length - 1);
     await room.waitForNextTimestep();
     (room as any).endRace(room.state.tick);
     await room.waitForNextTimestep();
